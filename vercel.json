@@ -1,0 +1,14 @@
+{
+  "version": 2,
+  "functions": {
+    "api/stock_analysis.py": {
+      "runtime": "@vercel/python@4.3.0"
+    }
+  },
+  "routes": [
+    {
+      "src": "/api/stock_analysis",
+      "dest": "api/stock_analysis.py"
+    }
+  ]
+}
