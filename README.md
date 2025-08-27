@@ -7,7 +7,7 @@ This project provides a stock analysis API that utilizes the `yfinance` library 
 ```
 stockLinebot-api
 ├── api
-│   └── index.py        # Main API logic
+│   └── stock_analysis.py        # Main API logic
 ├── requirements.txt     # Project dependencies
 ├── vercel.json          # Vercel deployment configuration
 └── README.md            # Project documentation
@@ -35,7 +35,7 @@ stockLinebot-api
 To run the API locally, navigate to the `api` directory and execute the following command:
 
 ```bash
-python index.py
+python stock_analysis.py
 ```
 
 The API will be available at `http://localhost:5000`.
