@@ -2,9 +2,29 @@ import json
 import yfinance as yf
 import pandas as pd
 from http.server import BaseHTTPRequestHandler
+import os
+from dotenv import load_dotenv
 
+load_dotenv()  # loads .env file into environment variables
+
+API_KEY = os.getenv("API_KEY")
+
+# ----- HTTP Handler -----
 class handler(BaseHTTPRequestHandler):
+    def _check_api_key(self):
+        auth_header = self.headers.get("x-api-key")
+
+        if auth_header != API_KEY:
+            self.send_response(403)
+            self.send_header('Content-type', 'application/json')
+            self.end_headers()
+            self.wfile.write(b'{"error": "Forbidden - Invalid API Key"}')
+            return False
+        return True
+
     def do_POST(self):
+        if not self._check_api_key():
+            return
         content_length = int(self.headers['Content-Length'])
         post_data = self.rfile.read(content_length)
         response = main_app({"body": post_data.decode('utf-8')}, None)
@@ -13,6 +33,8 @@ class handler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(response["body"].encode('utf-8'))
     def do_GET(self):
+        if not self._check_api_key():
+            return
         self.send_response(200)
         self.send_header('Content-type','text/plain')
         self.end_headers()
@@ -128,13 +150,22 @@ def main_app(request, context):
         macd_signal = float(latest['MACD_Signal'])
         atr = float(latest['ATR14'])
         
-        msg = (
-            f"SMA Signal: {'BUY' if sma20 > sma50 else 'SELL'}\n"
-            f"EMA Signal: {'BUY' if ema20 > ema50 else 'SELL'}\n"
-            f"RSI: {rsi:.2f} → {'Overbought (SELL)' if rsi>70 else 'Oversold (BUY)' if rsi<30 else 'Neutral'}\n"
-            f"MACD: {macd:.2f} ({'Bullish' if macd>macd_signal else 'Bearish'})\n"
-            f"ATR14: {atr:.2f} (Volatility)"
-        )
+        msg = {
+            "SMA_Signal": "BUY" if sma20 > sma50 else "SELL",
+            "EMA_Signal": "BUY" if ema20 > ema50 else "SELL",
+            "RSI": {
+                "value": round(rsi, 2),
+                "signal": "Overbought (SELL)" if rsi > 70 else "Oversold (BUY)" if rsi < 30 else "Neutral"
+            },
+            "MACD": {
+                "value": round(macd, 2),
+                "signal": "Bullish" if macd > macd_signal else "Bearish"
+            },
+            "ATR14": {
+                "value": round(atr, 2),
+                "description": "Volatility"
+            }
+        }
         recommendation = generate_recommendation(latest, ticker)
 
         response = {
