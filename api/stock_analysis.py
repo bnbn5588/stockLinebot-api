@@ -3,6 +3,8 @@ import yfinance as yf
 import pandas as pd
 from http.server import BaseHTTPRequestHandler
 import os
+from datetime import datetime, time as dtime
+from zoneinfo import ZoneInfo
 from dotenv import load_dotenv
 
 load_dotenv()  # loads .env file into environment variables
@@ -229,10 +231,27 @@ def main_app(request, context):
                 "body": json.dumps({"error": "Ticker is required"})
             }
 
-        stock_data = yf.download(ticker, period=period, auto_adjust=True)
+        stock_data = yf.download(ticker, period=period, interval="1d",
+                                 auto_adjust=True, progress=False)
+
+        if stock_data.empty:
+            return {
+                "statusCode": 502,
+                "body": json.dumps({"error": "No data returned from Yahoo Finance. Check the ticker or try again later."})
+            }
 
         if isinstance(stock_data.columns, pd.MultiIndex):
             stock_data.columns = ['_'.join(filter(None, col)).strip() for col in stock_data.columns.values]
+
+        # Drop today's still-forming daily bar while the US session is open (or
+        # pre-market), so results are deterministic regardless of call time.
+        # After the 16:00 ET close the bar is complete and is kept.
+        et_now = datetime.now(ZoneInfo("America/New_York"))
+        if (stock_data.index[-1].date() == et_now.date()
+                and et_now.time() < dtime(16, 0)):
+            stock_data = stock_data.iloc[:-1]
+
+        rows_returned = int(len(stock_data))
 
         stock_data = calculate_indicators(stock_data, ticker)
 
@@ -288,6 +307,8 @@ def main_app(request, context):
 
         response = {
             "ticker":          ticker,
+            "data_as_of":      str(latest.name),
+            "rows_returned":   rows_returned,
             "recommendation":  recommendation,
             "strength":        strength,
             "confidence":      confidence,

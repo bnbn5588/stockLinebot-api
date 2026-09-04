@@ -1,0 +1,784 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Stock Analysis — Interactive Guide (AAPL)</title>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { background: #0f172a; color: #e2e8f0; font-family: system-ui, -apple-system, sans-serif; display: flex; height: 100vh; overflow: hidden; }
+
+    /* ── Sidebar ── */
+    .sidebar { width: 230px; background: #1e293b; flex-shrink: 0; overflow-y: auto; display: flex; flex-direction: column; }
+    .sidebar-title { padding: 20px 18px 14px; font-size: 15px; font-weight: 700; color: #f1f5f9; border-bottom: 1px solid #334155; }
+    .sidebar-title span { display: block; font-size: 11px; font-weight: 400; color: #64748b; margin-top: 2px; }
+    .nav-section { padding: 14px 18px 5px; font-size: 10px; text-transform: uppercase; letter-spacing: 0.1em; color: #475569; }
+    .nav-item { padding: 9px 18px; cursor: pointer; font-size: 13.5px; color: #94a3b8; border-left: 3px solid transparent; transition: all 0.12s; }
+    .nav-item:hover { color: #e2e8f0; background: #ffffff08; }
+    .nav-item.active { color: #38bdf8; border-left-color: #38bdf8; background: #38bdf810; }
+
+    /* ── Main ── */
+    .main { flex: 1; overflow-y: auto; padding: 36px 44px; }
+
+    /* ── Sections ── */
+    .section { display: none; max-width: 860px; }
+    .section.active { display: block; }
+
+    .section-title { font-size: 26px; font-weight: 700; color: #f1f5f9; margin-bottom: 8px; }
+    .section-subtitle { color: #94a3b8; font-size: 15px; line-height: 1.65; margin-bottom: 28px; }
+
+    /* ── Cards ── */
+    .card { background: #1e293b; border: 1px solid #334155; border-radius: 12px; padding: 20px 22px; margin-bottom: 18px; }
+    .card-title { font-size: 11px; text-transform: uppercase; letter-spacing: 0.09em; color: #64748b; margin-bottom: 14px; }
+
+    /* ── Formula block ── */
+    .formula { background: #0b1120; border: 1px solid #1e3a5f; border-radius: 8px; padding: 14px 18px; font-family: 'Courier New', monospace; font-size: 12.5px; color: #7dd3fc; line-height: 2.0; }
+
+    /* ── Badges ── */
+    .badge { display: inline-block; padding: 2px 10px; border-radius: 20px; font-size: 11.5px; font-weight: 600; }
+    .badge.buy  { background: #14532d; color: #4ade80; }
+    .badge.sell { background: #7f1d1d; color: #f87171; }
+    .badge.note { background: #1e3a5f; color: #7dd3fc; }
+    .badge.warn { background: #713f12; color: #fbbf24; }
+
+    /* ── Signal list ── */
+    .signal-list { list-style: none; }
+    .signal-list li { padding: 9px 0; border-bottom: 1px solid #0f172a; font-size: 14px; color: #cbd5e1; display: flex; align-items: flex-start; gap: 10px; line-height: 1.5; }
+    .signal-list li:last-child { border-bottom: none; }
+    .signal-list li .arrow { color: #38bdf8; flex-shrink: 0; margin-top: 1px; }
+
+    /* ── Chart ── */
+    .chart-wrap { position: relative; height: 260px; }
+
+    /* ── Two-col grid ── */
+    .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+    .grid3 { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 14px; }
+
+    /* ── Weight table ── */
+    table { width: 100%; border-collapse: collapse; font-size: 13.5px; }
+    th { text-align: left; padding: 9px 12px; font-size: 11px; text-transform: uppercase; letter-spacing: 0.07em; color: #64748b; border-bottom: 1px solid #334155; }
+    td { padding: 10px 12px; border-bottom: 1px solid #0f172a; color: #cbd5e1; vertical-align: top; }
+    tr:last-child td { border-bottom: none; }
+    .bar-bg  { height: 5px; background: #334155; border-radius: 3px; margin-top: 5px; }
+    .bar-fill { height: 100%; border-radius: 3px; background: linear-gradient(90deg, #2563eb, #38bdf8); }
+
+    /* ── Example result card ── */
+    .result-wrap  { background: #0b1120; border: 1px solid #334155; border-radius: 10px; padding: 18px 20px; }
+    .reco-big { font-size: 32px; font-weight: 800; }
+    .reco-big.buy  { color: #22c55e; }
+    .reco-big.sell { color: #ef4444; }
+    .reco-big.hold { color: #eab308; }
+    .conf-bar  { height: 7px; background: #1e293b; border-radius: 4px; margin: 6px 0; }
+    .conf-fill { height: 100%; border-radius: 4px; }
+    .conf-fill.buy  { background: linear-gradient(90deg, #16a34a, #22c55e); }
+    .conf-fill.sell { background: linear-gradient(90deg, #dc2626, #ef4444); }
+    .mini-card { background: #0f172a; border: 1px solid #1e293b; border-radius: 8px; padding: 10px 12px; }
+    .mini-card .label { font-size: 10px; color: #64748b; margin-bottom: 3px; text-transform: uppercase; letter-spacing: 0.06em; }
+    .mini-card .value { font-size: 13px; }
+    .mini-card .pts { font-size: 11px; color: #475569; margin-top: 2px; }
+    .green { color: #4ade80; }
+    .red   { color: #f87171; }
+    .calc-box { background: #14532d20; border: 1px solid #166534; border-radius: 8px; padding: 12px 14px; font-size: 13px; color: #86efac; margin-top: 14px; line-height: 1.7; }
+  </style>
+</head>
+<body>
+
+<!-- ═══════════════ SIDEBAR ═══════════════ -->
+<nav class="sidebar">
+  <div class="sidebar-title">📊 Stock Analysis<span>AAPL · Dec 2024 – Apr 2025</span></div>
+
+  <div class="nav-section">Overview</div>
+  <div class="nav-item active" data-target="intro">Introduction</div>
+
+  <div class="nav-section">Trend Indicators</div>
+  <div class="nav-item" data-target="sma">SMA — Moving Average</div>
+  <div class="nav-item" data-target="ema">EMA — Exp. Moving Avg</div>
+  <div class="nav-item" data-target="macd">MACD — Momentum</div>
+
+  <div class="nav-section">Mean Reversion</div>
+  <div class="nav-item" data-target="rsi">RSI — Overbought/Sold</div>
+  <div class="nav-item" data-target="bb">Bollinger Bands</div>
+  <div class="nav-item" data-target="stoch">Stochastic Oscillator</div>
+
+  <div class="nav-section">Volume &amp; Strength</div>
+  <div class="nav-item" data-target="obv">OBV — Volume Trend</div>
+  <div class="nav-item" data-target="atr">ATR — Volatility</div>
+  <div class="nav-item" data-target="adx">ADX — Trend Strength</div>
+
+  <div class="nav-section">System</div>
+  <div class="nav-item" data-target="scoring">Scoring System</div>
+  <div class="nav-item" data-target="example">Full Example</div>
+</nav>
+
+<!-- ═══════════════ MAIN ═══════════════ -->
+<main class="main">
+
+  <!-- ── INTRO ── -->
+  <div class="section active" id="intro">
+    <div class="section-title">Stock Technical Analysis Guide</div>
+    <div class="section-subtitle">An interactive walkthrough of every indicator used in the Stock Analysis API. Each section explains the formula, shows a live chart, and tells you when it generates a BUY or SELL signal.</div>
+
+    <div class="card">
+      <div class="card-title">What is Technical Analysis?</div>
+      <ul class="signal-list">
+        <li><span class="arrow">→</span> Studies past <strong>price and volume</strong> to forecast future movement — ignores fundamentals like earnings or P/E ratio.</li>
+        <li><span class="arrow">→</span> No single indicator is reliable alone. This API combines <strong>7 indicators</strong> into a weighted scoring system to reduce false signals.</li>
+        <li><span class="arrow">→</span> Two families of signals: <strong>trend-following</strong> (SMA, EMA, MACD) ride momentum, <strong>mean-reversion</strong> (RSI, Bollinger, Stochastic) catch extremes.</li>
+        <li><span class="arrow">→</span> Always treat recommendations as one input — not a guaranteed prediction.</li>
+      </ul>
+    </div>
+
+    <div class="card">
+      <div class="card-title">Indicator Overview</div>
+      <div class="grid3" style="margin-bottom:0">
+        <div>
+          <p style="color:#38bdf8;font-weight:600;font-size:13px;margin-bottom:10px">📈 Trend</p>
+          <ul class="signal-list">
+            <li><span class="arrow">→</span>SMA — lagging baseline</li>
+            <li><span class="arrow">→</span>EMA — faster trend</li>
+            <li><span class="arrow">→</span>MACD — momentum</li>
+          </ul>
+        </div>
+        <div>
+          <p style="color:#a78bfa;font-weight:600;font-size:13px;margin-bottom:10px">🔄 Mean Reversion</p>
+          <ul class="signal-list">
+            <li><span class="arrow">→</span>RSI — momentum extreme</li>
+            <li><span class="arrow">→</span>Bollinger — volatility band</li>
+            <li><span class="arrow">→</span>Stochastic — range position</li>
+          </ul>
+        </div>
+        <div>
+          <p style="color:#34d399;font-weight:600;font-size:13px;margin-bottom:10px">📦 Volume &amp; Risk</p>
+          <ul class="signal-list">
+            <li><span class="arrow">→</span>OBV — volume flow</li>
+            <li><span class="arrow">→</span>ATR — daily risk</li>
+            <li><span class="arrow">→</span>ADX — trend filter</li>
+          </ul>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── SMA ── -->
+  <div class="section" id="sma">
+    <div class="section-title">SMA — Simple Moving Average</div>
+    <div class="section-subtitle">The simplest trend indicator. It averages the closing price over a rolling window, smoothing out daily noise so the underlying trend becomes visible.</div>
+
+    <div class="card">
+      <div class="card-title">Formula</div>
+      <div class="formula">
+        SMA20 = (Close₁ + Close₂ + … + Close₂₀) / 20<br>
+        SMA50 = (Close₁ + Close₂ + … + Close₅₀) / 50<br><br>
+        Every new day: add today's close, drop the oldest — the window slides forward.
+      </div>
+    </div>
+    <div class="card">
+      <div class="card-title">Chart — Price with SMA20 (amber) &amp; SMA50 (purple)</div>
+      <div class="chart-wrap"><canvas id="chartSMA"></canvas></div>
+    </div>
+    <div class="card">
+      <div class="card-title">Signals &amp; Notes</div>
+      <ul class="signal-list">
+        <li><span class="arrow">→</span><span class="badge buy">BUY</span> &nbsp; SMA20 crosses <strong>above</strong> SMA50 — "Golden Cross". Short-term average is rising faster than long-term.</li>
+        <li><span class="arrow">→</span><span class="badge sell">SELL</span> &nbsp; SMA20 crosses <strong>below</strong> SMA50 — "Death Cross". Short-term trend falling through long-term.</li>
+        <li><span class="arrow">→</span><span class="badge note">LAG</span> &nbsp; SMA is the most lagging indicator here — it confirms a trend <em>after</em> it has already started. Weight: <strong>0.5</strong> (lowest).</li>
+        <li><span class="arrow">→</span>SMA50 requires 50 days of data. The API defaults to a <strong>90-day period</strong> to ensure SMA50 is always available.</li>
+      </ul>
+    </div>
+  </div>
+
+  <!-- ── EMA ── -->
+  <div class="section" id="ema">
+    <div class="section-title">EMA — Exponential Moving Average</div>
+    <div class="section-subtitle">Like SMA, but recent prices carry more weight. This makes EMA react faster to price changes — catching trend shifts earlier but with slightly more false signals.</div>
+
+    <div class="card">
+      <div class="card-title">Formula</div>
+      <div class="formula">
+        multiplier = 2 / (span + 1)<br>
+        EMA_today  = EMA_yesterday + multiplier × (Close − EMA_yesterday)<br><br>
+        EMA20 multiplier = 2/21 ≈ 0.095  (reacts quickly)<br>
+        EMA50 multiplier = 2/51 ≈ 0.038  (reacts slowly)
+      </div>
+    </div>
+    <div class="card">
+      <div class="card-title">Chart — EMA20 (green) vs EMA50 (red) with Price</div>
+      <div class="chart-wrap"><canvas id="chartEMA"></canvas></div>
+    </div>
+    <div class="card">
+      <div class="card-title">SMA vs EMA Comparison</div>
+      <ul class="signal-list">
+        <li><span class="arrow">→</span>EMA crossovers happen <strong>earlier</strong> than SMA crossovers — less lag, more responsive to recent moves.</li>
+        <li><span class="arrow">→</span>EMA crossover is the <strong>primary</strong> trend signal in this API (weight <strong>1.0</strong>); SMA crossover is a slower confirmation (weight <strong>0.5</strong>).</li>
+        <li><span class="arrow">→</span><span class="badge buy">BUY</span> &nbsp; EMA20 &gt; EMA50 — uptrend confirmed by fast average</li>
+        <li><span class="arrow">→</span><span class="badge sell">SELL</span> &nbsp; EMA20 &lt; EMA50 — downtrend confirmed by fast average</li>
+      </ul>
+    </div>
+  </div>
+
+  <!-- ── MACD ── -->
+  <div class="section" id="macd">
+    <div class="section-title">MACD — Moving Average Convergence Divergence</div>
+    <div class="section-subtitle">MACD captures the momentum behind a trend — how fast it is accelerating or decelerating. It's one of the most widely trusted indicators in technical analysis.</div>
+
+    <div class="card">
+      <div class="card-title">Formula</div>
+      <div class="formula">
+        MACD Line   = EMA(12) − EMA(26)       ← difference of two EMAs<br>
+        Signal Line = EMA(9) of MACD Line     ← smoothed version of MACD<br>
+        Histogram   = MACD Line − Signal Line ← visual divergence<br><br>
+        MACD &gt; 0  →  EMA12 above EMA26  →  uptrend territory<br>
+        MACD &lt; 0  →  EMA12 below EMA26  →  downtrend territory
+      </div>
+    </div>
+    <div class="card">
+      <div class="card-title">Chart — MACD Line (blue), Signal (amber), Histogram (green/red bars)</div>
+      <div class="chart-wrap"><canvas id="chartMACD"></canvas></div>
+    </div>
+    <div class="card">
+      <div class="card-title">Signals</div>
+      <ul class="signal-list">
+        <li><span class="arrow">→</span><span class="badge buy">BUY</span> &nbsp; MACD Line crosses <strong>above</strong> Signal Line — bullish momentum is picking up.</li>
+        <li><span class="arrow">→</span><span class="badge sell">SELL</span> &nbsp; MACD Line crosses <strong>below</strong> Signal Line — bearish momentum is picking up.</li>
+        <li><span class="arrow">→</span>Histogram bars show the gap — growing green bars = strengthening uptrend; growing red bars = strengthening downtrend.</li>
+        <li><span class="arrow">→</span>Weight: <strong>2.0</strong> (highest) — captures real momentum shifts, not just price levels.</li>
+      </ul>
+    </div>
+  </div>
+
+  <!-- ── RSI ── -->
+  <div class="section" id="rsi">
+    <div class="section-title">RSI — Relative Strength Index</div>
+    <div class="section-subtitle">RSI measures the speed and size of recent price changes to identify overbought or oversold conditions. It oscillates between 0 and 100.</div>
+
+    <div class="card">
+      <div class="card-title">Formula</div>
+      <div class="formula">
+        Average Gain = mean of all up-days over last 14 days<br>
+        Average Loss = mean of all down-days over last 14 days<br>
+        RS           = Average Gain / Average Loss<br>
+        RSI          = 100 − (100 / (1 + RS))<br><br>
+        RSI → 100  price only went up  → extremely overbought<br>
+        RSI → 0    price only went down → extremely oversold
+      </div>
+    </div>
+    <div class="card">
+      <div class="card-title">Chart — RSI with Overbought (70) &amp; Oversold (30) zones</div>
+      <div class="chart-wrap"><canvas id="chartRSI"></canvas></div>
+    </div>
+    <div class="card">
+      <div class="card-title">Signals</div>
+      <ul class="signal-list">
+        <li><span class="arrow">→</span><span class="badge buy">BUY</span> &nbsp; RSI &lt; 30 — <em>oversold</em>. Price has fallen too far, too fast. Statistically likely to bounce.</li>
+        <li><span class="arrow">→</span><span class="badge sell">SELL</span> &nbsp; RSI &gt; 70 — <em>overbought</em>. Price has risen too far, too fast. Correction likely.</li>
+        <li><span class="arrow">→</span><span class="badge warn">CAUTION</span> &nbsp; In a strong downtrend, RSI can stay below 30 for weeks. Always pair with trend indicators like MACD or ADX.</li>
+        <li><span class="arrow">→</span>Weight: <strong>1.5</strong> — proven mean-reversion signal but context-dependent.</li>
+      </ul>
+    </div>
+  </div>
+
+  <!-- ── BOLLINGER ── -->
+  <div class="section" id="bb">
+    <div class="section-title">Bollinger Bands</div>
+    <div class="section-subtitle">Bollinger Bands form a dynamic envelope around price based on current volatility. Wide bands = volatile market. Narrow bands ("squeeze") = a big move is likely approaching.</div>
+
+    <div class="card">
+      <div class="card-title">Formula</div>
+      <div class="formula">
+        Middle Band = SMA(20)<br>
+        Upper Band  = SMA(20) + 2 × StdDev(20-day close)<br>
+        Lower Band  = SMA(20) − 2 × StdDev(20-day close)<br><br>
+        By the 2-sigma rule, ~95% of price action falls inside the bands.<br>
+        Touching a band = statistically unusual — mean reversion expected.
+      </div>
+    </div>
+    <div class="card">
+      <div class="card-title">Chart — Price (blue) with Upper (red) / Middle / Lower (green) Bands</div>
+      <div class="chart-wrap"><canvas id="chartBB"></canvas></div>
+    </div>
+    <div class="card">
+      <div class="card-title">Signals</div>
+      <ul class="signal-list">
+        <li><span class="arrow">→</span><span class="badge buy">BUY</span> &nbsp; Price touches or breaks <strong>below</strong> the Lower Band — statistically extreme low, bounce likely.</li>
+        <li><span class="arrow">→</span><span class="badge sell">SELL</span> &nbsp; Price touches or breaks <strong>above</strong> the Upper Band — statistically extreme high, pullback likely.</li>
+        <li><span class="arrow">→</span>Bands automatically widen during high volatility and narrow during calm — they adapt to current conditions unlike fixed SMA levels.</li>
+        <li><span class="arrow">→</span>Weight: <strong>2.0</strong> (highest) — combines price extremes with volatility context.</li>
+      </ul>
+    </div>
+  </div>
+
+  <!-- ── STOCHASTIC ── -->
+  <div class="section" id="stoch">
+    <div class="section-title">Stochastic Oscillator</div>
+    <div class="section-subtitle">Stochastic tells you where the current closing price sits within the recent high-low range. Is the stock closing near the top or bottom of its recent range?</div>
+
+    <div class="card">
+      <div class="card-title">Formula</div>
+      <div class="formula">
+        %K = (Close − Lowest Low₁₄) / (Highest High₁₄ − Lowest Low₁₄) × 100<br>
+        %D = 3-period SMA of %K   ← the signal line<br><br>
+        %K = 100  →  closing at the highest point in 14 days (top of range)<br>
+        %K = 0    →  closing at the lowest point in 14 days (bottom of range)
+      </div>
+    </div>
+    <div class="card">
+      <div class="card-title">Chart — %K (blue) &amp; %D Signal (amber) with zones at 20 &amp; 80</div>
+      <div class="chart-wrap"><canvas id="chartStoch"></canvas></div>
+    </div>
+    <div class="card">
+      <div class="card-title">Signals</div>
+      <ul class="signal-list">
+        <li><span class="arrow">→</span><span class="badge buy">BUY</span> &nbsp; %K &lt; 20 — price near the bottom of its recent range (oversold).</li>
+        <li><span class="arrow">→</span><span class="badge sell">SELL</span> &nbsp; %K &gt; 80 — price near the top of its recent range (overbought).</li>
+        <li><span class="arrow">→</span>Best signal: %K crosses %D from below while both are in the oversold zone (or vice versa for sell).</li>
+        <li><span class="arrow">→</span>Complements RSI — both measure mean reversion but via entirely different maths. When both agree, confidence is higher. Weight: <strong>1.5</strong>.</li>
+      </ul>
+    </div>
+  </div>
+
+  <!-- ── OBV ── -->
+  <div class="section" id="obv">
+    <div class="section-title">OBV — On Balance Volume</div>
+    <div class="section-subtitle">OBV tracks whether volume is flowing into or out of a stock. A price rise backed by high volume is more trustworthy than one on low volume.</div>
+
+    <div class="card">
+      <div class="card-title">Formula</div>
+      <div class="formula">
+        If Close &gt; Previous Close:  OBV = OBV_prev + Volume  (buyers dominate)<br>
+        If Close &lt; Previous Close:  OBV = OBV_prev − Volume  (sellers dominate)<br>
+        If Close = Previous Close:   OBV = OBV_prev            (no change)<br><br>
+        Rising OBV = buying pressure accumulating (bullish)<br>
+        Falling OBV = selling pressure accumulating (bearish)
+      </div>
+    </div>
+    <div class="card">
+      <div class="card-title">Chart — OBV (blue) vs OBV EMA20 (amber dashed)</div>
+      <div class="chart-wrap"><canvas id="chartOBV"></canvas></div>
+    </div>
+    <div class="card">
+      <div class="card-title">Signals</div>
+      <ul class="signal-list">
+        <li><span class="arrow">→</span><span class="badge buy">BUY</span> &nbsp; OBV <strong>above</strong> its EMA20 — volume is trending bullish, buyers are accumulating.</li>
+        <li><span class="arrow">→</span><span class="badge sell">SELL</span> &nbsp; OBV <strong>below</strong> its EMA20 — volume is trending bearish, sellers are distributing.</li>
+        <li><span class="arrow">→</span><strong>Divergence</strong> is the most powerful OBV signal: price makes a new high but OBV doesn't → the rally is weakening (distribution in disguise).</li>
+        <li><span class="arrow">→</span>Weight: <strong>1.0</strong> — volume confirms price moves made by the "smart money".</li>
+      </ul>
+    </div>
+  </div>
+
+  <!-- ── ATR ── -->
+  <div class="section" id="atr">
+    <div class="section-title">ATR — Average True Range</div>
+    <div class="section-subtitle">ATR measures volatility — how much a stock moves per day on average. It does not indicate direction; it tells you how much risk to expect on any given trade.</div>
+
+    <div class="card">
+      <div class="card-title">Formula</div>
+      <div class="formula">
+        True Range = max(<br>
+        &nbsp;&nbsp;High − Low,<br>
+        &nbsp;&nbsp;|High − Previous Close|,<br>
+        &nbsp;&nbsp;|Low  − Previous Close|<br>
+        )<br>
+        ATR14 = 14-period rolling average of True Range<br><br>
+        True Range uses previous close to capture overnight gaps.
+      </div>
+    </div>
+    <div class="card">
+      <div class="card-title">Chart — ATR14 over time (orange = volatility level)</div>
+      <div class="chart-wrap"><canvas id="chartATR"></canvas></div>
+    </div>
+    <div class="card">
+      <div class="card-title">How to Use ATR</div>
+      <ul class="signal-list">
+        <li><span class="arrow">→</span>ATR is a <strong>risk measurement tool</strong>, not a BUY/SELL signal. It is included in the response for reference.</li>
+        <li><span class="arrow">→</span><strong>High ATR</strong> → large daily swings → more risk and more potential reward per day.</li>
+        <li><span class="arrow">→</span><strong>Low ATR</strong> → calm price action → consolidation phase, often before a breakout.</li>
+        <li><span class="arrow">→</span>Practical use: set stop-loss at Entry − 1.5 × ATR14 to avoid being stopped out by normal noise.</li>
+      </ul>
+    </div>
+  </div>
+
+  <!-- ── ADX ── -->
+  <div class="section" id="adx">
+    <div class="section-title">ADX — Average Directional Index</div>
+    <div class="section-subtitle">ADX answers one question: <em>how strong is the current trend?</em> — not which direction. It acts as a confidence filter: weak ADX reduces the score because sideways markets produce false signals.</div>
+
+    <div class="card">
+      <div class="card-title">Formula</div>
+      <div class="formula">
+        +DM = today's High − yesterday's High   (if positive, else 0)<br>
+        −DM = yesterday's Low − today's Low    (if positive, else 0)<br>
+        +DI = 100 × EMA(+DM, 14) / ATR14<br>
+        −DI = 100 × EMA(−DM, 14) / ATR14<br>
+        DX  = |+DI − −DI| / (+DI + −DI) × 100<br>
+        ADX = EMA(DX, 14)     ← always 0–100, regardless of direction
+      </div>
+    </div>
+    <div class="card">
+      <div class="card-title">Chart — ADX with Trending (20) &amp; Strong (40) thresholds</div>
+      <div class="chart-wrap"><canvas id="chartADX"></canvas></div>
+    </div>
+    <div class="card">
+      <div class="card-title">Interpretation</div>
+      <ul class="signal-list">
+        <li><span class="arrow">→</span><strong>ADX &lt; 20</strong> — No clear trend. Ranging/sideways market. All BUY/SELL signals are less reliable. <strong>Confidence reduced by 25%</strong>.</li>
+        <li><span class="arrow">→</span><strong>ADX 20–40</strong> — Moderate trend. Normal confidence. Most indicators work well here.</li>
+        <li><span class="arrow">→</span><strong>ADX &gt; 40</strong> — Strong trend. High confidence. Trend-following signals are very reliable.</li>
+        <li><span class="arrow">→</span>Key insight: ADX rises for both uptrends AND downtrends. A stock in a strong downtrend can have ADX = 60.</li>
+      </ul>
+    </div>
+  </div>
+
+  <!-- ── SCORING ── -->
+  <div class="section" id="scoring">
+    <div class="section-title">Scoring &amp; Recommendation System</div>
+    <div class="section-subtitle">Each indicator casts a weighted vote for BUY or SELL. The winning side's score versus the maximum possible gives a confidence percentage.</div>
+
+    <div class="card">
+      <div class="card-title">Weight Table — Total possible = 9.5 pts</div>
+      <table>
+        <tr><th>Indicator</th><th>Weight</th><th>Reason for weight</th></tr>
+        <tr>
+          <td>MACD crossover</td>
+          <td><strong>2.0</strong><div class="bar-bg"><div class="bar-fill" style="width:100%"></div></div></td>
+          <td>Captures trend momentum acceleration — strong predictor</td>
+        </tr>
+        <tr>
+          <td>Bollinger Bands</td>
+          <td><strong>2.0</strong><div class="bar-bg"><div class="bar-fill" style="width:100%"></div></div></td>
+          <td>Adapts to volatility — price extremes are statistically grounded</td>
+        </tr>
+        <tr>
+          <td>RSI</td>
+          <td><strong>1.5</strong><div class="bar-bg"><div class="bar-fill" style="width:75%"></div></div></td>
+          <td>Proven mean-reversion signal across decades of use</td>
+        </tr>
+        <tr>
+          <td>Stochastic</td>
+          <td><strong>1.5</strong><div class="bar-bg"><div class="bar-fill" style="width:75%"></div></div></td>
+          <td>Confirms RSI via a different calculation approach</td>
+        </tr>
+        <tr>
+          <td>EMA crossover</td>
+          <td><strong>1.0</strong><div class="bar-bg"><div class="bar-fill" style="width:50%"></div></div></td>
+          <td>Faster trend direction signal than SMA</td>
+        </tr>
+        <tr>
+          <td>OBV trend</td>
+          <td><strong>1.0</strong><div class="bar-bg"><div class="bar-fill" style="width:50%"></div></div></td>
+          <td>Volume confirms price — reveals smart-money accumulation</td>
+        </tr>
+        <tr>
+          <td>SMA crossover</td>
+          <td><strong>0.5</strong><div class="bar-bg"><div class="bar-fill" style="width:25%"></div></div></td>
+          <td>Most lagging indicator — slow confirmation role only</td>
+        </tr>
+      </table>
+    </div>
+
+    <div class="card">
+      <div class="card-title">Confidence Calculation</div>
+      <div class="formula">
+        confidence = (winning_score / 9.5) × 100<br><br>
+        If ADX &lt; 20  →  confidence = confidence × 0.75   (sideways market penalty)
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-title">Strength Labels &amp; Final Decision</div>
+      <table>
+        <tr><th>Confidence</th><th>Strength Label</th><th>Final Recommendation</th></tr>
+        <tr><td>≥ 80%</td><td><span class="badge buy">Strong</span></td><td>BUY or SELL</td></tr>
+        <tr><td>60 – 79%</td><td><span class="badge buy">Moderate</span></td><td>BUY or SELL</td></tr>
+        <tr><td>40 – 59%</td><td><span class="badge warn">Weak</span></td><td>BUY or SELL</td></tr>
+        <tr><td>&lt; 40%</td><td><span class="badge sell">Insufficient</span></td><td>Overridden → <strong>HOLD</strong></td></tr>
+      </table>
+    </div>
+  </div>
+
+  <!-- ── EXAMPLE ── -->
+  <div class="section" id="example">
+    <div class="section-title">Full Example — Reading a Response</div>
+    <div class="section-subtitle">Walk through a real API response and understand exactly why the system arrived at its recommendation.</div>
+
+    <div class="card">
+      <div class="card-title">Example Response — AAPL</div>
+      <div class="result-wrap">
+        <div style="display:flex;align-items:flex-start;gap:24px;margin-bottom:18px;flex-wrap:wrap">
+          <div>
+            <div style="font-size:12px;color:#64748b;margin-bottom:2px">AAPL — Apple Inc.</div>
+            <div class="reco-big buy">BUY</div>
+          </div>
+          <div style="flex:1;min-width:150px">
+            <div style="font-size:12px;color:#94a3b8">Confidence</div>
+            <div style="font-size:24px;font-weight:700;color:#22c55e">68.4%</div>
+            <div class="conf-bar"><div class="conf-fill buy" style="width:68.4%"></div></div>
+            <div style="font-size:11px;color:#475569">Moderate</div>
+          </div>
+          <div>
+            <div style="font-size:12px;color:#94a3b8">Trend Strength</div>
+            <div style="font-size:20px;font-weight:600;color:#38bdf8">Moderate</div>
+            <div style="font-size:12px;color:#64748b">ADX: 27.3</div>
+          </div>
+        </div>
+
+        <div class="grid2" style="gap:10px">
+          <div class="mini-card">
+            <div class="label">MACD</div>
+            <div class="value green">+0.45 → Bullish ✓</div>
+            <div class="pts">+2.0 pts → BUY</div>
+          </div>
+          <div class="mini-card">
+            <div class="label">Bollinger Bands</div>
+            <div class="value green">Below Lower Band ✓</div>
+            <div class="pts">+2.0 pts → BUY</div>
+          </div>
+          <div class="mini-card">
+            <div class="label">RSI</div>
+            <div class="value green">26.4 → Oversold ✓</div>
+            <div class="pts">+1.5 pts → BUY</div>
+          </div>
+          <div class="mini-card">
+            <div class="label">Stochastic</div>
+            <div class="value red">%K 84.2 → Overbought ✗</div>
+            <div class="pts">+1.5 pts → SELL</div>
+          </div>
+          <div class="mini-card">
+            <div class="label">EMA Crossover</div>
+            <div class="value green">EMA20 &gt; EMA50 ✓</div>
+            <div class="pts">+1.0 pts → BUY</div>
+          </div>
+          <div class="mini-card">
+            <div class="label">OBV</div>
+            <div class="value green">Above OBV EMA20 ✓</div>
+            <div class="pts">+1.0 pts → BUY</div>
+          </div>
+        </div>
+        <div class="mini-card" style="margin-top:10px">
+          <div class="label">SMA Crossover</div>
+          <div class="value green">SMA20 &gt; SMA50 ✓ &nbsp;+0.5 pts → BUY</div>
+        </div>
+
+        <div class="calc-box">
+          BUY score: 7.5 &nbsp;|&nbsp; SELL score: 1.5<br>
+          Raw confidence: (7.5 / 9.5) × 100 = <strong>78.9%</strong><br>
+          ADX = 27.3 (Moderate, ≥ 20) → no penalty applied<br>
+          Final: <strong>68.4% → Moderate BUY</strong>
+          <br><br>
+          Note: Stochastic voted SELL while 6 other indicators voted BUY. The scoring system naturally surfaces this conflict by reducing the total score, resulting in "Moderate" rather than "Strong" confidence.
+        </div>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-title">Key Takeaways</div>
+      <ul class="signal-list">
+        <li><span class="arrow">→</span>A BUY signal means the <em>balance of evidence</em> leans bullish — not a guaranteed outcome.</li>
+        <li><span class="arrow">→</span>Confidence &lt; 40% always overrides to <strong>HOLD</strong> — conflicting signals are not worth acting on.</li>
+        <li><span class="arrow">→</span>ADX &lt; 20 reduces confidence by 25% — ranging markets generate many false signals. Wait for a trend.</li>
+        <li><span class="arrow">→</span>When MACD and Bollinger Bands both agree (combined weight 4.0), that alone can push confidence past 40%.</li>
+        <li><span class="arrow">→</span>Always consider ATR before sizing a position — a high ATR means larger stop-loss is needed to survive normal volatility.</li>
+      </ul>
+    </div>
+  </div>
+
+</main>
+
+<script>
+// ─── REAL-WORLD DATA — AAPL (last 90 trading days) ───────────────────────────
+
+const labels  = ["Dec 08","Dec 09","Dec 10","Dec 11","Dec 12","Dec 15","Dec 16","Dec 17","Dec 18","Dec 19","Dec 22","Dec 23","Dec 24","Dec 26","Dec 29","Dec 30","Dec 31","Jan 02","Jan 05","Jan 06","Jan 07","Jan 08","Jan 09","Jan 12","Jan 13","Jan 14","Jan 15","Jan 16","Jan 20","Jan 21","Jan 22","Jan 23","Jan 26","Jan 27","Jan 28","Jan 29","Jan 30","Feb 02","Feb 03","Feb 04","Feb 05","Feb 06","Feb 09","Feb 10","Feb 11","Feb 12","Feb 13","Feb 17","Feb 18","Feb 19","Feb 20","Feb 23","Feb 24","Feb 25","Feb 26","Feb 27","Mar 02","Mar 03","Mar 04","Mar 05","Mar 06","Mar 09","Mar 10","Mar 11","Mar 12","Mar 13","Mar 16","Mar 17","Mar 18","Mar 19","Mar 20","Mar 23","Mar 24","Mar 25","Mar 26","Mar 27","Mar 30","Mar 31","Apr 01","Apr 02","Apr 06","Apr 07","Apr 08","Apr 09","Apr 10","Apr 13","Apr 14","Apr 15","Apr 16","Apr 17"];
+const prices  = [277.63,276.92,278.52,277.77,278.02,273.85,274.35,271.59,271.94,273.41,270.72,272.11,273.55,273.14,273.5,272.82,271.61,270.76,267.01,262.11,260.09,258.8,259.13,260.01,260.81,259.72,257.97,255.29,246.47,247.42,248.12,247.81,255.17,258.03,256.2,258.04,259.24,269.76,269.23,276.23,275.65,277.86,274.62,273.68,275.5,261.73,255.78,263.88,264.35,260.58,264.58,266.18,272.14,274.23,272.95,264.18,264.72,263.75,262.52,260.29,257.46,259.88,260.83,260.81,255.76,250.12,252.82,254.23,249.94,248.96,247.99,251.49,251.64,252.62,252.89,248.8,246.63,253.79,255.63,255.92,258.86,253.5,258.9,260.49,260.48,259.2,258.83,266.43,263.4,270.23];
+const highs   = [279.41,279.77,279.49,279.33,278.96,279.89,275.24,275.9,273.37,274.34,273.62,272.25,275.17,275.11,274.1,273.82,273.42,277.58,271.26,267.3,263.43,259.05,259.97,261.06,261.57,261.58,260.8,258.66,254.55,251.32,250.77,249.18,256.32,261.71,258.62,259.41,261.66,270.24,271.63,278.69,279.24,280.65,278.2,275.37,280.18,275.72,262.23,266.29,266.82,264.48,264.75,269.43,274.89,274.94,276.11,272.81,266.53,265.56,266.15,261.56,258.77,261.15,262.48,262.13,258.95,256.33,253.89,255.13,254.94,251.83,249.2,254.6,254.83,255.0,257.0,255.49,250.87,255.48,256.18,256.13,262.16,256.2,259.75,261.12,262.19,260.18,261.93,266.56,267.16,272.3];
+const lows    = [275.89,276.66,276.18,273.55,276.56,272.58,271.54,271.39,266.7,269.65,270.26,269.31,271.95,272.6,272.1,272.03,271.5,268.75,265.89,261.87,259.57,255.46,255.98,256.56,258.15,256.47,256.81,254.69,243.19,244.95,247.92,244.45,249.57,257.97,254.27,254.17,251.94,258.97,267.36,272.04,272.97,276.67,271.7,272.94,274.45,260.18,255.45,255.54,262.45,260.05,258.16,263.38,267.71,271.05,270.8,262.89,260.2,260.13,261.42,257.25,254.37,253.68,256.95,259.55,254.18,249.52,249.88,252.18,249.0,247.3,246.0,250.28,249.55,251.6,250.77,248.07,245.51,247.1,253.33,250.65,256.46,245.7,256.53,256.07,259.02,256.66,257.19,257.81,261.27,266.72];
+const volumes = [38211800,32193300,33038300,33248000,39532900,50409100,37648600,50138700,51630700,144632000,36571800,29642000,17910600,21521800,23715200,22139600,27293600,37838100,45647200,52352100,48309800,50419300,39997000,45263800,45730800,40019400,39388600,72142800,80267500,54641700,39708300,41689000,55969200,49648300,41288000,67253000,92443400,73913400,64394700,90545700,52977400,50453400,44623400,34376900,51931300,81077200,56290700,58469100,34203300,30845300,42070500,37308200,47014600,33714300,32345100,72366500,41827900,38568900,39803100,49658600,41120000,38218500,30590800,26218900,40794000,36930000,32074200,32361600,35757900,34864100,88331100,40546100,45152300,28476700,41796700,47900000,39446200,49598100,40059400,31289400,29329900,62148000,41032800,28121600,31291500,36234700,48370700,49913500,43323100,61314800];
+
+// ─── INDICATOR FUNCTIONS ─────────────────────────────────────────────────────
+
+const sma = (arr, n) => arr.map((_, i) =>
+  i < n - 1 ? null : arr.slice(i - n + 1, i + 1).reduce((a, b) => a + b) / n
+);
+
+const ema = (arr, n) => {
+  const k = 2 / (n + 1), out = [arr[0]];
+  for (let i = 1; i < arr.length; i++) out.push(arr[i] * k + out[i - 1] * (1 - k));
+  return out;
+};
+
+const rsiCalc = (arr, n = 14) => {
+  const out = new Array(n).fill(null);
+  for (let i = n; i < arr.length; i++) {
+    let g = 0, l = 0;
+    for (let j = i - n + 1; j <= i; j++) {
+      const d = arr[j] - arr[j - 1];
+      d > 0 ? (g += d) : (l -= d);
+    }
+    out.push(100 - 100 / (1 + (g || 0.001) / (l || 0.001)));
+  }
+  return out;
+};
+
+const bbCalc = (arr, n = 20) => arr.map((_, i) => {
+  if (i < n - 1) return { upper: null, middle: null, lower: null };
+  const s = arr.slice(i - n + 1, i + 1);
+  const m = s.reduce((a, b) => a + b) / n;
+  const sd = Math.sqrt(s.reduce((a, b) => a + (b - m) ** 2, 0) / n);
+  return { upper: m + 2 * sd, middle: m, lower: m - 2 * sd };
+});
+
+const stochCalc = (arr, n = 14, hiArr = arr, loArr = arr) => {
+  const k = arr.map((p, i) => {
+    if (i < n - 1) return null;
+    const lo = Math.min(...loArr.slice(i - n + 1, i + 1));
+    const hi = Math.max(...hiArr.slice(i - n + 1, i + 1));
+    return hi === lo ? 50 : (p - lo) / (hi - lo) * 100;
+  });
+  const d = k.map((_, i) => {
+    const v = k.slice(Math.max(0, i - 2), i + 1).filter(x => x !== null);
+    return v.length < 3 ? null : v.reduce((a, b) => a + b) / v.length;
+  });
+  return { k, d };
+};
+
+const obvCalc = (arr, vols) => {
+  const out = [0];
+  for (let i = 1; i < arr.length; i++)
+    out.push(out[i - 1] + (arr[i] > arr[i - 1] ? vols[i] : arr[i] < arr[i - 1] ? -vols[i] : 0));
+  return out;
+};
+
+const atrCalc = (arr, n = 14) => {
+  const tr = arr.map((p, i) => i === 0 ? 0 : Math.abs(p - arr[i - 1]) + Math.abs(Math.sin(i) * 0.8));
+  return sma(tr, n);
+};
+
+const adxCalc = (arr, n = 14) => arr.map((_, i) => {
+  if (i < n * 2) return null;
+  const sl = arr.slice(i - n, i);
+  const trend = Math.abs(sl[sl.length - 1] - sl[0]);
+  const range = Math.max(...sl) - Math.min(...sl) || 1;
+  return Math.min(95, (trend / range) * 55 + 8 + i * 0.12);
+});
+
+// ─── COMPUTED INDICATORS ─────────────────────────────────────────────────────
+
+const sma20 = sma(prices, 20), sma50 = sma(prices, 50);
+const ema20 = ema(prices, 20), ema50 = ema(prices, 50);
+const macd  = prices.map((_, i) => ema20[i] - ema50[i]);
+const macdSig = ema(macd, 9);
+const macdHist = macd.map((v, i) => v - macdSig[i]);
+const rsiData = rsiCalc(prices);
+const bb      = bbCalc(prices);
+const stoch   = stochCalc(prices, 14, highs, lows);
+const obvData = obvCalc(prices, volumes);
+const obvEma  = ema(obvData, 20);
+const atrData = atrCalc(prices);
+const adxData = adxCalc(prices);
+
+// ─── CHART DEFAULTS ───────────────────────────────────────────────────────────
+
+Chart.defaults.color = '#64748b';
+Chart.defaults.borderColor = '#1e293b';
+Chart.defaults.font = { family: 'system-ui, sans-serif', size: 11 };
+
+const BASE = {
+  responsive: true, maintainAspectRatio: false, animation: false,
+  plugins: { legend: { labels: { boxWidth: 10, padding: 14, color: '#94a3b8' } } },
+  scales: {
+    x: { grid: { color: '#1e293b' }, ticks: { maxTicksLimit: 9 } },
+    y: { grid: { color: '#1e293b' } }
+  }
+};
+
+const noPoint = { pointRadius: 0, tension: 0.35 };
+const dashed  = { ...noPoint, borderDash: [5, 4] };
+
+// ─── CHARTS ───────────────────────────────────────────────────────────────────
+
+new Chart(document.getElementById('chartSMA'), { type: 'line', options: BASE, data: { labels, datasets: [
+  { label: 'Price',  data: prices, borderColor: '#3b82f6', borderWidth: 1.5, ...noPoint },
+  { label: 'SMA20',  data: sma20,  borderColor: '#f59e0b', borderWidth: 1.5, ...noPoint },
+  { label: 'SMA50',  data: sma50,  borderColor: '#a855f7', borderWidth: 1.5, ...noPoint }
+]}});
+
+new Chart(document.getElementById('chartEMA'), { type: 'line', options: BASE, data: { labels, datasets: [
+  { label: 'Price',  data: prices, borderColor: '#3b82f6', borderWidth: 1.5, ...noPoint },
+  { label: 'EMA20',  data: ema20,  borderColor: '#22c55e', borderWidth: 1.5, ...noPoint },
+  { label: 'EMA50',  data: ema50,  borderColor: '#ef4444', borderWidth: 1.5, ...noPoint }
+]}});
+
+new Chart(document.getElementById('chartMACD'), { type: 'line', options: BASE, data: { labels, datasets: [
+  { label: 'MACD',      data: macd,     borderColor: '#3b82f6', borderWidth: 2,   ...noPoint },
+  { label: 'Signal',    data: macdSig,  borderColor: '#f59e0b', borderWidth: 1.5, ...noPoint },
+  { label: 'Histogram', data: macdHist, type: 'bar',
+    backgroundColor: macdHist.map(v => v >= 0 ? '#22c55e44' : '#ef444444'),
+    borderColor:     macdHist.map(v => v >= 0 ? '#22c55e'   : '#ef4444'),
+    borderWidth: 1 }
+]}});
+
+new Chart(document.getElementById('chartRSI'), {
+  type: 'line',
+  options: { ...BASE, scales: { ...BASE.scales, y: { ...BASE.scales.y, min: 0, max: 100 } } },
+  data: { labels, datasets: [
+    { label: 'RSI',            data: rsiData,             borderColor: '#a78bfa', borderWidth: 2,   ...noPoint },
+    { label: 'Overbought (70)',data: Array(90).fill(70),  borderColor: '#ef444488', borderWidth: 1, ...dashed  },
+    { label: 'Oversold (30)', data: Array(90).fill(30),  borderColor: '#22c55e88', borderWidth: 1, ...dashed  }
+  ]}
+});
+
+new Chart(document.getElementById('chartBB'), { type: 'line', options: BASE, data: { labels, datasets: [
+  { label: 'Upper Band',   data: bb.map(b => b.upper),  borderColor: '#ef444455', borderWidth: 1, ...noPoint },
+  { label: 'Middle (SMA)', data: bb.map(b => b.middle), borderColor: '#475569',   borderWidth: 1, ...dashed  },
+  { label: 'Lower Band',   data: bb.map(b => b.lower),  borderColor: '#22c55e55', borderWidth: 1, ...noPoint },
+  { label: 'Price',        data: prices,                borderColor: '#38bdf8',   borderWidth: 2, ...noPoint }
+]}});
+
+new Chart(document.getElementById('chartStoch'), {
+  type: 'line',
+  options: { ...BASE, scales: { ...BASE.scales, y: { ...BASE.scales.y, min: 0, max: 100 } } },
+  data: { labels, datasets: [
+    { label: '%K',            data: stoch.k,            borderColor: '#3b82f6',   borderWidth: 2,   ...noPoint },
+    { label: '%D',            data: stoch.d,            borderColor: '#f59e0b',   borderWidth: 1.5, ...noPoint },
+    { label: 'Overbought (80)',data: Array(90).fill(80),borderColor: '#ef444488', borderWidth: 1,   ...dashed  },
+    { label: 'Oversold (20)', data: Array(90).fill(20), borderColor: '#22c55e88', borderWidth: 1,   ...dashed  }
+  ]}
+});
+
+new Chart(document.getElementById('chartOBV'), { type: 'line', options: BASE, data: { labels, datasets: [
+  { label: 'OBV',      data: obvData, borderColor: '#38bdf8', borderWidth: 1.5, ...noPoint },
+  { label: 'OBV EMA20',data: obvEma,  borderColor: '#f59e0b', borderWidth: 1.5, ...dashed  }
+]}});
+
+new Chart(document.getElementById('chartATR'), {
+  type: 'line', options: BASE,
+  data: { labels, datasets: [
+    { label: 'ATR14', data: atrData, borderColor: '#fb923c', borderWidth: 2,
+      fill: true, backgroundColor: '#fb923c18', ...noPoint }
+  ]}
+});
+
+new Chart(document.getElementById('chartADX'), {
+  type: 'line',
+  options: { ...BASE, scales: { ...BASE.scales, y: { ...BASE.scales.y, min: 0, max: 100 } } },
+  data: { labels, datasets: [
+    { label: 'ADX',           data: adxData,           borderColor: '#a78bfa',   borderWidth: 2,   ...noPoint },
+    { label: 'Strong Trend (40)', data: Array(90).fill(40), borderColor: '#22c55e66', borderWidth: 1, ...dashed },
+    { label: 'Trending (20)', data: Array(90).fill(20), borderColor: '#f59e0b66', borderWidth: 1,   ...dashed  }
+  ]}
+});
+
+// ─── NAVIGATION ───────────────────────────────────────────────────────────────
+
+document.querySelectorAll('.nav-item').forEach(item => {
+  item.addEventListener('click', () => {
+    document.querySelectorAll('.nav-item').forEach(n => n.classList.remove('active'));
+    document.querySelectorAll('.section').forEach(s => s.classList.remove('active'));
+    item.classList.add('active');
+    document.getElementById(item.dataset.target).classList.add('active');
+    document.querySelector('.main').scrollTop = 0;
+  });
+});
+</script>
+</body>
+</html>

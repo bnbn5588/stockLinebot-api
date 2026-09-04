@@ -88,6 +88,8 @@ curl -X POST http://localhost:5000 \
 ```json
 {
   "ticker": "AAPL",
+  "data_as_of": "2026-09-03 00:00:00",
+  "rows_returned": 90,
   "recommendation": "BUY",
   "strength": "Moderate",
   "confidence": 63.2,
@@ -132,6 +134,8 @@ curl -X POST http://localhost:5000 \
 
 | Field | Description |
 |-------|-------------|
+| `data_as_of` | Timestamp of the last completed daily bar the analysis is based on. If this value does not advance between calls, no new trading session has closed yet — identical analysis is expected. |
+| `rows_returned` | Number of daily bars used (today's still-forming bar is excluded while the US market is open). |
 | `recommendation` | `BUY`, `SELL`, or `HOLD` |
 | `strength` | `Strong`, `Moderate`, `Weak`, or `Insufficient` |
 | `confidence` | Percentage score (0–100) of how strongly signals agree |
