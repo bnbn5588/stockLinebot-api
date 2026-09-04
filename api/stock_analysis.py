@@ -47,14 +47,32 @@ def _expected_last_session(et_now):
     return d
 
 
-def _flatten(df):
+_OHLCV = ("Open", "High", "Low", "Close", "Volume")
+
+
+def _normalize(df, ticker):
+    """Flatten yfinance's MultiIndex and strip the per-ticker suffix so every
+    source (Yahoo, Twelve Data) exposes the same plain Open/High/Low/Close/Volume
+    columns. Keeps the frames splice-compatible."""
     if isinstance(df.columns, pd.MultiIndex):
         df.columns = ['_'.join(filter(None, col)).strip() for col in df.columns.values]
+    df = df.rename(columns={f"{c}_{ticker}": c for c in _OHLCV})
     return df
 
 
-def _close_col(df, ticker):
-    return f"Close_{ticker}" if f"Close_{ticker}" in df.columns else "Close"
+def _append_newer(base, extra):
+    """Splice bars from `extra` that are newer than base's last bar onto `base`.
+    Used to patch a fresh tip onto Yahoo's (adjusted) history when Yahoo lags,
+    instead of swapping the whole series to another vendor."""
+    if base is None or getattr(base, "empty", True):
+        return extra
+    if extra is None or extra.empty:
+        return base
+    newer = extra[extra.index > base.index[-1]]
+    if newer.empty:
+        return base
+    cols = [c for c in base.columns if c in newer.columns]
+    return pd.concat([base, newer[cols]])
 
 
 def _download_fresh(ticker, period, et_now, attempts=3, pause=1.2):
@@ -70,12 +88,12 @@ def _download_fresh(ticker, period, et_now, attempts=3, pause=1.2):
             df = yf.download(ticker, period=period, interval="1d",
                              auto_adjust=True, progress=False, session=session)
             if df is not None and not df.empty:
-                df = _flatten(df)
+                df = _normalize(df, ticker)
                 # Yahoo often appends an empty placeholder row for a day it has
                 # not populated yet (very common on throttled datacenter IPs).
                 # Drop any row without a real close so freshness reflects the
                 # newest bar that actually has data.
-                df = df[df[_close_col(df, ticker)].notna()]
+                df = df[df["Close"].notna()]
             if df is not None and not df.empty:
                 best = df
                 if df.index[-1].date() >= expected:
@@ -98,9 +116,11 @@ def _download_fresh(ticker, period, et_now, attempts=3, pause=1.2):
 
 def _download_twelvedata(ticker, outputsize=150):
     """Fallback daily-bar source (used only when Yahoo is stale/unavailable).
-    Returns a DataFrame shaped like the flattened yfinance one, or None.
-    Note: Twelve Data time_series is NOT split/dividend adjusted; over a ~90-day
-    window this is immaterial unless the ticker had a corporate action."""
+    Returns a DataFrame with the same plain OHLCV columns as _download_fresh,
+    or None. Note: Twelve Data time_series is NOT split/dividend adjusted, so
+    when it fully replaces Yahoo's history the indicators can shift slightly;
+    when it only patches the newest bar(s) onto Yahoo history the difference is
+    negligible (no ex-date between the gap and now)."""
     if not TWELVEDATA_API_KEY:
         return None
     q = urllib.parse.urlencode({
@@ -365,15 +385,24 @@ def main_app(request, context):
         et_now = datetime.now(ZoneInfo("America/New_York"))
         stock_data, expected_session, fetch_meta = _download_fresh(ticker, period, et_now)
 
-        # If Yahoo is unavailable or still stale after retries, fall back to the
+        # If Yahoo is unavailable or still stale after retries, bring in the
         # keyed provider (only does anything when TWELVEDATA_API_KEY is set).
+        # Preferred path: splice just the missing recent bars onto Yahoo's
+        # adjusted history, so results stay consistent with a normal Yahoo run.
+        # Only when Yahoo returned nothing at all do we use Twelve Data alone.
         yahoo_last = _last_bar_date(stock_data)
         if yahoo_last is None or yahoo_last < expected_session:
             td = _download_twelvedata(ticker)
             td_last = _last_bar_date(td)
             if td_last is not None and td_last > (yahoo_last or date.min):
-                stock_data = td
-                fetch_meta = {"session": "twelvedata", "attempts": fetch_meta["attempts"]}
+                if yahoo_last is None:
+                    stock_data = td
+                    fetch_meta = {**fetch_meta, "session": "twelvedata"}
+                else:
+                    before = len(stock_data)
+                    stock_data = _append_newer(stock_data, td)
+                    fetch_meta = {**fetch_meta, "session": "yahoo+twelvedata",
+                                  "patched_bars": len(stock_data) - before}
 
         if stock_data is None or stock_data.empty:
             return {

@@ -40,9 +40,12 @@ TWELVEDATA_API_KEY=your_twelvedata_key   # optional, see below
 
 **`TWELVEDATA_API_KEY` (optional but recommended):** Yahoo Finance throttles requests
 from Vercel's shared datacenter IPs and will silently return data that is 1+ trading
-days stale. When that happens the API falls back to [Twelve Data](https://twelvedata.com/)
-(free tier: 800 requests/day, 8/min). Without the key set, the fallback is skipped and
-a throttled response comes back with `"stale": true`.
+days stale. When that happens the API pulls the missing recent bar(s) from
+[Twelve Data](https://twelvedata.com/) (free tier: 800 requests/day, 8/min) and
+splices them onto Yahoo's history, so the analysis matches a normal Yahoo run. If
+Yahoo returns nothing at all, Twelve Data is used for the whole series instead.
+Without the key set, the fallback is skipped and a throttled response comes back
+with `"stale": true`. A Twelve Data credit is only spent when Yahoo is actually stale.
 
 ---
 
@@ -149,8 +152,9 @@ curl -X POST http://localhost:5000 \
 | `expected_session` | The most recent weekday whose US close (16:00 ET) has already passed. Ignores US market holidays. |
 | `stale` | `true` when Yahoo kept returning an old window even after retries (`data_as_of` < `expected_session`, and not a holiday gap). The analysis is still returned, but it is behind the market. Common when Yahoo throttles Vercel's shared IPs. |
 | `served_at` | UTC time the response was generated. If two calls seconds apart return the same value, something upstream is caching the response. |
-| `fetch.session` | `curl_cffi/chrome` (browser impersonation active) or `default` (fallback). |
-| `fetch.attempts` | How many download attempts were needed. `3` means every retry still came back stale. |
+| `fetch.session` | Where the bars came from: `curl_cffi/chrome` / `default` = Yahoo only; `yahoo+twelvedata` = Yahoo's history with the newest bar(s) patched in from Twelve Data (results stay consistent with a normal Yahoo run); `twelvedata` = Yahoo returned nothing, Twelve Data used alone (indicators may shift slightly, and raw `OBV` is not comparable across sources — its Bullish/Bearish signal still is). |
+| `fetch.attempts` | How many Yahoo download attempts were needed. `3` means every retry still came back stale. |
+| `fetch.patched_bars` | Only present for `yahoo+twelvedata`: how many trailing bars were filled in from Twelve Data (usually 1). |
 | `rows_returned` | Number of daily bars used (today's still-forming bar is excluded while the US market is open). |
 | `recommendation` | `BUY`, `SELL`, or `HOLD` |
 | `strength` | `Strong`, `Moderate`, `Weak`, or `Insufficient` |
