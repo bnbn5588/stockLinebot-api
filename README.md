@@ -33,9 +33,16 @@ Create `api/.env`:
 
 ```
 API_KEY=your_secret_key_here
+TWELVEDATA_API_KEY=your_twelvedata_key   # optional, see below
 ```
 
-> For Vercel production, set `API_KEY` via `vercel env add API_KEY` instead of committing the file.
+> For Vercel production, set these via `vercel env add API_KEY` (etc.) instead of committing the file.
+
+**`TWELVEDATA_API_KEY` (optional but recommended):** Yahoo Finance throttles requests
+from Vercel's shared datacenter IPs and will silently return data that is 1+ trading
+days stale. When that happens the API falls back to [Twelve Data](https://twelvedata.com/)
+(free tier: 800 requests/day, 8/min). Without the key set, the fallback is skipped and
+a throttled response comes back with `"stale": true`.
 
 ---
 
@@ -358,6 +365,7 @@ Environment variables must be set in Vercel (not in `.env`):
 
 ```bash
 vercel env add API_KEY
+vercel env add TWELVEDATA_API_KEY   # optional stale-data fallback
 ```
 
 ---
@@ -366,6 +374,9 @@ vercel env add API_KEY
 
 | Package | Purpose |
 |---------|---------|
-| `yfinance` | Fetches OHLCV stock data from Yahoo Finance |
+| `yfinance` | Primary OHLCV source (Yahoo Finance) — pinned, since upstream behaviour changes often |
+| `curl_cffi` | Browser-impersonating HTTP session for yfinance, to reduce Yahoo throttling |
 | `pandas` | Data manipulation and rolling calculations |
-| `python-dotenv` | Loads `API_KEY` from `.env` for local development |
+| `python-dotenv` | Loads env vars from `.env` for local development |
+
+Twelve Data (stale-data fallback) is called over stdlib `urllib` — no extra package.

@@ -1,16 +1,22 @@
 import json
 import time
+import urllib.request
+import urllib.parse
 import yfinance as yf
 import pandas as pd
 from http.server import BaseHTTPRequestHandler
 import os
-from datetime import datetime, timedelta, time as dtime
+from datetime import datetime, timedelta, date, time as dtime
 from zoneinfo import ZoneInfo
 from dotenv import load_dotenv
 
 load_dotenv()  # loads .env file into environment variables
 
 API_KEY = os.getenv("API_KEY")
+# Optional keyed fallback for when Yahoo throttles Vercel's shared IP and keeps
+# returning a stale window (see _download_fresh). Free tier: 800 req/day.
+# Get a key at https://twelvedata.com/ and set it via `vercel env add`.
+TWELVEDATA_API_KEY = os.getenv("TWELVEDATA_API_KEY")
 
 # Yahoo throttles / edge-caches requests from datacenter IPs (e.g. Vercel),
 # which makes yf.download silently return a window that is 1+ trading days
@@ -88,6 +94,50 @@ def _download_fresh(ticker, period, et_now, attempts=3, pause=1.2):
                 pass
     meta = {"session": _SESSION_KIND, "attempts": used}
     return best, expected, meta
+
+
+def _download_twelvedata(ticker, outputsize=150):
+    """Fallback daily-bar source (used only when Yahoo is stale/unavailable).
+    Returns a DataFrame shaped like the flattened yfinance one, or None.
+    Note: Twelve Data time_series is NOT split/dividend adjusted; over a ~90-day
+    window this is immaterial unless the ticker had a corporate action."""
+    if not TWELVEDATA_API_KEY:
+        return None
+    q = urllib.parse.urlencode({
+        "symbol": ticker,
+        "interval": "1day",
+        "outputsize": outputsize,
+        "order": "ASC",
+        "apikey": TWELVEDATA_API_KEY,
+    })
+    try:
+        req = urllib.request.Request(
+            f"https://api.twelvedata.com/time_series?{q}",
+            headers={"User-Agent": "stockLinebot/1.0"},
+        )
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            payload = json.loads(resp.read().decode("utf-8"))
+    except Exception:
+        return None
+    if payload.get("status") != "ok" or not payload.get("values"):
+        return None
+    rows = payload["values"]  # ascending
+    try:
+        df = pd.DataFrame({
+            "Open":   [float(v["open"])  for v in rows],
+            "High":   [float(v["high"])  for v in rows],
+            "Low":    [float(v["low"])   for v in rows],
+            "Close":  [float(v["close"]) for v in rows],
+            "Volume": [float(v.get("volume") or 0) for v in rows],
+        }, index=pd.to_datetime([v["datetime"] for v in rows]))
+    except (KeyError, ValueError, TypeError):
+        return None
+    df.index.name = "Date"
+    return df
+
+
+def _last_bar_date(df):
+    return df.index[-1].date() if df is not None and not getattr(df, "empty", True) else None
 
 # ----- HTTP Handler -----
 class handler(BaseHTTPRequestHandler):
@@ -315,10 +365,20 @@ def main_app(request, context):
         et_now = datetime.now(ZoneInfo("America/New_York"))
         stock_data, expected_session, fetch_meta = _download_fresh(ticker, period, et_now)
 
+        # If Yahoo is unavailable or still stale after retries, fall back to the
+        # keyed provider (only does anything when TWELVEDATA_API_KEY is set).
+        yahoo_last = _last_bar_date(stock_data)
+        if yahoo_last is None or yahoo_last < expected_session:
+            td = _download_twelvedata(ticker)
+            td_last = _last_bar_date(td)
+            if td_last is not None and td_last > (yahoo_last or date.min):
+                stock_data = td
+                fetch_meta = {"session": "twelvedata", "attempts": fetch_meta["attempts"]}
+
         if stock_data is None or stock_data.empty:
             return {
                 "statusCode": 502,
-                "body": json.dumps({"error": "No data returned from Yahoo Finance. Check the ticker or try again later."})
+                "body": json.dumps({"error": "No data returned from any provider. Check the ticker or try again later."})
             }
 
         # Drop today's still-forming daily bar while the US session is open (or
