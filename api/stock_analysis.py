@@ -1,15 +1,72 @@
 import json
+import time
 import yfinance as yf
 import pandas as pd
 from http.server import BaseHTTPRequestHandler
 import os
-from datetime import datetime, time as dtime
+from datetime import datetime, timedelta, time as dtime
 from zoneinfo import ZoneInfo
 from dotenv import load_dotenv
 
 load_dotenv()  # loads .env file into environment variables
 
 API_KEY = os.getenv("API_KEY")
+
+# Yahoo throttles / edge-caches requests from datacenter IPs (e.g. Vercel),
+# which makes yf.download silently return a window that is 1+ trading days
+# stale. A browser-impersonating curl_cffi session gets a fresh crumb/cookie
+# and dodges most of that; _download_fresh() retries if the data still lags.
+try:
+    from curl_cffi import requests as _curl_requests
+
+    def _make_session():
+        return _curl_requests.Session(impersonate="chrome")
+except Exception:  # curl_cffi unavailable -> fall back to yfinance default
+    def _make_session():
+        return None
+
+
+def _expected_last_session(et_now):
+    """Most recent weekday whose 16:00 ET close has passed. Ignores US holidays,
+    so right after a holiday the real data can legitimately be one day behind."""
+    d = et_now.date()
+    if et_now.time() < dtime(16, 0):
+        d -= timedelta(days=1)
+    while d.weekday() >= 5:  # 5 = Sat, 6 = Sun
+        d -= timedelta(days=1)
+    return d
+
+
+def _download_fresh(ticker, period, et_now, attempts=3, pause=1.2):
+    """Download daily bars, retrying when Yahoo hands back a stale window.
+    Returns (dataframe_or_None, expected_last_session)."""
+    expected = _expected_last_session(et_now)
+    session = _make_session()
+    best = None
+    try:
+        for i in range(attempts):
+            df = yf.download(ticker, period=period, interval="1d",
+                             auto_adjust=True, progress=False, session=session)
+            if df is not None and not df.empty:
+                if isinstance(df.columns, pd.MultiIndex):
+                    df.columns = ['_'.join(filter(None, col)).strip()
+                                  for col in df.columns.values]
+                best = df
+                if df.index[-1].date() >= expected:
+                    break
+            elif i >= 1:
+                # Two empty results in a row -> almost certainly a bad ticker,
+                # not throttling. Stop wasting retries.
+                break
+            if i < attempts - 1:
+                time.sleep(pause)
+    finally:
+        if session is not None:
+            try:
+                session.close()
+            except Exception:
+                pass
+    return best, expected
 
 # ----- HTTP Handler -----
 class handler(BaseHTTPRequestHandler):
@@ -231,27 +288,26 @@ def main_app(request, context):
                 "body": json.dumps({"error": "Ticker is required"})
             }
 
-        stock_data = yf.download(ticker, period=period, interval="1d",
-                                 auto_adjust=True, progress=False)
+        et_now = datetime.now(ZoneInfo("America/New_York"))
+        stock_data, expected_session = _download_fresh(ticker, period, et_now)
 
-        if stock_data.empty:
+        if stock_data is None or stock_data.empty:
             return {
                 "statusCode": 502,
                 "body": json.dumps({"error": "No data returned from Yahoo Finance. Check the ticker or try again later."})
             }
 
-        if isinstance(stock_data.columns, pd.MultiIndex):
-            stock_data.columns = ['_'.join(filter(None, col)).strip() for col in stock_data.columns.values]
-
         # Drop today's still-forming daily bar while the US session is open (or
         # pre-market), so results are deterministic regardless of call time.
         # After the 16:00 ET close the bar is complete and is kept.
-        et_now = datetime.now(ZoneInfo("America/New_York"))
         if (stock_data.index[-1].date() == et_now.date()
                 and et_now.time() < dtime(16, 0)):
             stock_data = stock_data.iloc[:-1]
 
         rows_returned = int(len(stock_data))
+        # True when Yahoo still returned an old window after all retries. Not a
+        # hard failure (stale data still beats none), but the caller should know.
+        data_is_stale = stock_data.index[-1].date() < expected_session
 
         stock_data = calculate_indicators(stock_data, ticker)
 
@@ -308,6 +364,8 @@ def main_app(request, context):
         response = {
             "ticker":          ticker,
             "data_as_of":      str(latest.name),
+            "expected_session": str(expected_session),
+            "stale":           bool(data_is_stale),
             "rows_returned":   rows_returned,
             "recommendation":  recommendation,
             "strength":        strength,

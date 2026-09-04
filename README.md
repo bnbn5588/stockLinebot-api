@@ -89,6 +89,8 @@ curl -X POST http://localhost:5000 \
 {
   "ticker": "AAPL",
   "data_as_of": "2026-09-03 00:00:00",
+  "expected_session": "2026-09-03",
+  "stale": false,
   "rows_returned": 90,
   "recommendation": "BUY",
   "strength": "Moderate",
@@ -135,6 +137,8 @@ curl -X POST http://localhost:5000 \
 | Field | Description |
 |-------|-------------|
 | `data_as_of` | Timestamp of the last completed daily bar the analysis is based on. If this value does not advance between calls, no new trading session has closed yet — identical analysis is expected. |
+| `expected_session` | The most recent weekday whose US close (16:00 ET) has already passed. Ignores US market holidays. |
+| `stale` | `true` when Yahoo kept returning an old window even after retries (`data_as_of` < `expected_session`, and not a holiday gap). The analysis is still returned, but it is behind the market. Common when Yahoo throttles Vercel's shared IPs. |
 | `rows_returned` | Number of daily bars used (today's still-forming bar is excluded while the US market is open). |
 | `recommendation` | `BUY`, `SELL`, or `HOLD` |
 | `strength` | `Strong`, `Moderate`, `Weak`, or `Insufficient` |

@@ -1,3 +1,4 @@
-yfinance
+yfinance==1.2.2
+curl_cffi
 pandas
 python-dotenv
