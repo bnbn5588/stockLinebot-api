@@ -21,9 +21,13 @@ try:
 
     def _make_session():
         return _curl_requests.Session(impersonate="chrome")
+
+    _SESSION_KIND = "curl_cffi/chrome"
 except Exception:  # curl_cffi unavailable -> fall back to yfinance default
     def _make_session():
         return None
+
+    _SESSION_KIND = "default"
 
 
 def _expected_last_session(et_now):
@@ -37,20 +41,36 @@ def _expected_last_session(et_now):
     return d
 
 
+def _flatten(df):
+    if isinstance(df.columns, pd.MultiIndex):
+        df.columns = ['_'.join(filter(None, col)).strip() for col in df.columns.values]
+    return df
+
+
+def _close_col(df, ticker):
+    return f"Close_{ticker}" if f"Close_{ticker}" in df.columns else "Close"
+
+
 def _download_fresh(ticker, period, et_now, attempts=3, pause=1.2):
     """Download daily bars, retrying when Yahoo hands back a stale window.
-    Returns (dataframe_or_None, expected_last_session)."""
+    Returns (dataframe_or_None, expected_last_session, meta)."""
     expected = _expected_last_session(et_now)
     session = _make_session()
     best = None
+    used = 0
     try:
         for i in range(attempts):
+            used = i + 1
             df = yf.download(ticker, period=period, interval="1d",
                              auto_adjust=True, progress=False, session=session)
             if df is not None and not df.empty:
-                if isinstance(df.columns, pd.MultiIndex):
-                    df.columns = ['_'.join(filter(None, col)).strip()
-                                  for col in df.columns.values]
+                df = _flatten(df)
+                # Yahoo often appends an empty placeholder row for a day it has
+                # not populated yet (very common on throttled datacenter IPs).
+                # Drop any row without a real close so freshness reflects the
+                # newest bar that actually has data.
+                df = df[df[_close_col(df, ticker)].notna()]
+            if df is not None and not df.empty:
                 best = df
                 if df.index[-1].date() >= expected:
                     break
@@ -66,7 +86,8 @@ def _download_fresh(ticker, period, et_now, attempts=3, pause=1.2):
                 session.close()
             except Exception:
                 pass
-    return best, expected
+    meta = {"session": _SESSION_KIND, "attempts": used}
+    return best, expected, meta
 
 # ----- HTTP Handler -----
 class handler(BaseHTTPRequestHandler):
@@ -89,6 +110,9 @@ class handler(BaseHTTPRequestHandler):
         response = main_app({"body": post_data.decode('utf-8')}, None)
         self.send_response(response["statusCode"])
         self.send_header('Content-type', 'application/json')
+        # Never let Vercel's edge or any proxy serve a cached analysis.
+        self.send_header('Cache-Control', 'no-store, max-age=0')
+        self.send_header('CDN-Cache-Control', 'no-store')
         self.end_headers()
         self.wfile.write(response["body"].encode('utf-8'))
 
@@ -289,7 +313,7 @@ def main_app(request, context):
             }
 
         et_now = datetime.now(ZoneInfo("America/New_York"))
-        stock_data, expected_session = _download_fresh(ticker, period, et_now)
+        stock_data, expected_session, fetch_meta = _download_fresh(ticker, period, et_now)
 
         if stock_data is None or stock_data.empty:
             return {
@@ -366,6 +390,8 @@ def main_app(request, context):
             "data_as_of":      str(latest.name),
             "expected_session": str(expected_session),
             "stale":           bool(data_is_stale),
+            "served_at":       datetime.now(ZoneInfo("UTC")).isoformat(),
+            "fetch":           fetch_meta,
             "rows_returned":   rows_returned,
             "recommendation":  recommendation,
             "strength":        strength,
