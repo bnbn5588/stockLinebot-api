@@ -439,6 +439,11 @@ def main_app(request, context):
         close_col = f"Close_{ticker}" if f"Close_{ticker}" in latest.index else "Close"
         close_val = float(latest[close_col])
 
+        # Stable key for the latest close, regardless of which source/column
+        # layout the row came from (Yahoo "Close_TICKER" vs "Close" vs fallback).
+        latest_data_out = latest.to_dict()
+        latest_data_out["raw_price"] = close_val
+
         recommendation, strength, confidence, trend_label, adx_val = generate_recommendation(latest, ticker)
 
         details = {
@@ -487,7 +492,7 @@ def main_app(request, context):
             "confidence":      confidence,
             "trend_strength":  f"{trend_label} (ADX: {adx_val})",
             "details":         details,
-            "latest_data":     latest.to_dict()
+            "latest_data":     latest_data_out
         }
         return {
             "statusCode": 200,
