@@ -2,6 +2,7 @@ import json
 import time
 import urllib.request
 import urllib.parse
+import urllib.error
 import yfinance as yf
 import pandas as pd
 from http.server import BaseHTTPRequestHandler
@@ -114,15 +115,8 @@ def _download_fresh(ticker, period, et_now, attempts=3, pause=1.2):
     return best, expected, meta
 
 
-def _download_twelvedata(ticker, outputsize=150):
-    """Fallback daily-bar source (used only when Yahoo is stale/unavailable).
-    Returns a DataFrame with the same plain OHLCV columns as _download_fresh,
-    or None. Note: Twelve Data time_series is NOT split/dividend adjusted, so
-    when it fully replaces Yahoo's history the indicators can shift slightly;
-    when it only patches the newest bar(s) onto Yahoo history the difference is
-    negligible (no ex-date between the gap and now)."""
-    if not TWELVEDATA_API_KEY:
-        return None
+def _twelvedata_request(ticker, outputsize):
+    """One HTTP round-trip to Twelve Data. Returns (payload_dict_or_None, rate_limited)."""
     q = urllib.parse.urlencode({
         "symbol": ticker,
         "interval": "1day",
@@ -130,17 +124,60 @@ def _download_twelvedata(ticker, outputsize=150):
         "order": "ASC",
         "apikey": TWELVEDATA_API_KEY,
     })
+    req = urllib.request.Request(
+        f"https://api.twelvedata.com/time_series?{q}",
+        headers={"User-Agent": "stockLinebot/1.0"},
+    )
     try:
-        req = urllib.request.Request(
-            f"https://api.twelvedata.com/time_series?{q}",
-            headers={"User-Agent": "stockLinebot/1.0"},
-        )
         with urllib.request.urlopen(req, timeout=10) as resp:
-            payload = json.loads(resp.read().decode("utf-8"))
+            return json.loads(resp.read().decode("utf-8")), False
+    except urllib.error.HTTPError as e:
+        if e.code == 429:
+            return None, True
+        try:
+            body = json.loads(e.read().decode("utf-8"))
+        except Exception:
+            return None, False
+        # Twelve Data sometimes reports the limit as HTTP 200/400 with a JSON
+        # body (code 429) rather than an actual HTTP 429 status.
+        return None, body.get("code") == 429
     except Exception:
-        return None
+        return None, False
+
+
+def _download_twelvedata(ticker, outputsize=150, attempts=2, pause=4):
+    """Fallback daily-bar source (used only when Yahoo is stale/unavailable).
+    Returns (dataframe_or_None, status) where status is "ok", "no_key",
+    "rate_limited", or "error". Note: Twelve Data time_series is NOT
+    split/dividend adjusted, so when it fully replaces Yahoo's history the
+    indicators can shift slightly; when it only patches the newest bar(s) onto
+    Yahoo history the difference is negligible (no ex-date between the gap and
+    now).
+
+    Twelve Data's free tier caps at 8 requests/minute. If several tickers in
+    the same batch all need the fallback at once, later ones can get 429'd;
+    that's a rolling window, so a short wait usually frees a slot back up."""
+    if not TWELVEDATA_API_KEY:
+        return None, "no_key"
+
+    payload = None
+    was_rate_limited = False
+    for i in range(attempts):
+        payload, rate_limited = _twelvedata_request(ticker, outputsize)
+        if payload is not None:
+            break
+        was_rate_limited = was_rate_limited or rate_limited
+        if rate_limited and i < attempts - 1:
+            time.sleep(pause)
+        elif not rate_limited:
+            break
+
+    if payload is None:
+        return None, ("rate_limited" if was_rate_limited else "error")
     if payload.get("status") != "ok" or not payload.get("values"):
-        return None
+        code = payload.get("code")
+        return None, "rate_limited" if code == 429 else "error"
+
     rows = payload["values"]  # ascending
     try:
         df = pd.DataFrame({
@@ -151,9 +188,9 @@ def _download_twelvedata(ticker, outputsize=150):
             "Volume": [float(v.get("volume") or 0) for v in rows],
         }, index=pd.to_datetime([v["datetime"] for v in rows]))
     except (KeyError, ValueError, TypeError):
-        return None
+        return None, "error"
     df.index.name = "Date"
-    return df
+    return df, "ok"
 
 
 def _last_bar_date(df):
@@ -392,7 +429,7 @@ def main_app(request, context):
         # Only when Yahoo returned nothing at all do we use Twelve Data alone.
         yahoo_last = _last_bar_date(stock_data)
         if yahoo_last is None or yahoo_last < expected_session:
-            td = _download_twelvedata(ticker)
+            td, td_status = _download_twelvedata(ticker)
             td_last = _last_bar_date(td)
             if td_last is not None and td_last > (yahoo_last or date.min):
                 if yahoo_last is None:
@@ -403,6 +440,11 @@ def main_app(request, context):
                     stock_data = _append_newer(stock_data, td)
                     fetch_meta = {**fetch_meta, "session": "yahoo+twelvedata",
                                   "patched_bars": len(stock_data) - before}
+            elif td_status != "ok":
+                # Fallback didn't help - record why, so a stale response is
+                # diagnosable (e.g. Twelve Data's 8 req/min cap hit mid-batch)
+                # instead of looking identical to "fallback wasn't needed".
+                fetch_meta = {**fetch_meta, "fallback": td_status}
 
         if stock_data is None or stock_data.empty:
             return {

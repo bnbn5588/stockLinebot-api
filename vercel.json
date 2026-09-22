@@ -2,7 +2,8 @@
   "version": 2,
   "functions": {
     "api/stock_analysis.py": {
-      "runtime": "@vercel/python@4.3.0"
+      "runtime": "@vercel/python@4.3.0",
+      "maxDuration": 25
     }
   },
   "routes": [

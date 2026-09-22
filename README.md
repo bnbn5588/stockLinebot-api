@@ -47,6 +47,16 @@ Yahoo returns nothing at all, Twelve Data is used for the whole series instead.
 Without the key set, the fallback is skipped and a throttled response comes back
 with `"stale": true`. A Twelve Data credit is only spent when Yahoo is actually stale.
 
+> **Calling this endpoint for a batch of tickers (e.g. a daily summary job)?**
+> Twelve Data's free tier caps at 8 requests/minute. If Yahoo is stale for the
+> whole batch, each ticker consumes one Twelve Data call, so a batch of more
+> than ~8 back-to-back calls can exhaust the fallback partway through — the API
+> retries once internally, but a small delay (~2s) between calls on the caller
+> side is what actually avoids this. Regardless of pacing, the caller should
+> check `stale` per ticker and reflect it in whatever it does with the result
+> (flag it, retry it later, or skip it) rather than presenting stale and fresh
+> data identically — see `stale` and `fetch.fallback` below.
+
 ---
 
 ## Running Locally
@@ -155,6 +165,7 @@ curl -X POST http://localhost:5000 \
 | `fetch.session` | Where the bars came from: `curl_cffi/chrome` / `default` = Yahoo only; `yahoo+twelvedata` = Yahoo's history with the newest bar(s) patched in from Twelve Data (results stay consistent with a normal Yahoo run); `twelvedata` = Yahoo returned nothing, Twelve Data used alone (indicators may shift slightly, and raw `OBV` is not comparable across sources — its Bullish/Bearish signal still is). |
 | `fetch.attempts` | How many Yahoo download attempts were needed. `3` means every retry still came back stale. |
 | `fetch.patched_bars` | Only present for `yahoo+twelvedata`: how many trailing bars were filled in from Twelve Data (usually 1). |
+| `fetch.fallback` | Only present when Twelve Data was tried but did **not** produce fresher data (so `stale` is likely still `true`): `"rate_limited"` if Twelve Data's own 429 (its free tier is 8 requests/minute; one retry with backoff is attempted before giving up) or `"error"` for anything else (bad symbol, network error, empty payload). Absent entirely if the fallback wasn't needed or isn't configured. **Diagnostic only** — callers should key behavior off `stale`, not this field. |
 | `rows_returned` | Number of daily bars used (today's still-forming bar is excluded while the US market is open). |
 | `recommendation` | `BUY`, `SELL`, or `HOLD` |
 | `strength` | `Strong`, `Moderate`, `Weak`, or `Insufficient` |
@@ -358,6 +369,12 @@ If ADX < 20 (sideways market):
 ---
 
 ## Deployment
+
+`vercel.json` sets `maxDuration: 25` for the function. This is deliberate: a request can
+retry Yahoo up to 3x and Twelve Data up to 2x (with a backoff pause) before giving up, and
+the default duration limit on some plans is too short to let that full retry chain finish
+cleanly — without headroom here, a slow request fails with a timeout instead of returning
+a graceful `"stale": true` response.
 
 Push to your connected Git branch and Vercel deploys automatically. To deploy manually:
 
