@@ -92,7 +92,8 @@ Analyse a stock and return a recommendation.
 | Field | Type | Required | Default | Description |
 |-------|------|----------|---------|-------------|
 | `ticker` | string | Yes | — | Stock ticker symbol (e.g. `AAPL`, `PTT.BK`) |
-| `period` | string | No | `90d` | Data window passed to yfinance (e.g. `30d`, `6mo`, `1y`) |
+| `period` | string | No | `90d` | Data window passed to yfinance (e.g. `30d`, `6mo`, `1y`). Used by `v1` only — `v2` always downloads `2y` (it needs 200+ bars for SMA200) |
+| `engine` | string | No | `v2` | `v2` = regime-gated trend engine (default); `v1` = original 7-indicator weighted vote, kept for rollback |
 
 **Example request:**
 
@@ -189,6 +190,25 @@ Health check. Returns `Hello, world!` if the API key is valid.
 ---
 
 ## Analysis Logic
+
+> **Default engine is now `v2`** (`ENGINE_VERSION = "v2_trend"`). The sections below
+> describe `v1`, still available with `"engine": "v1"`.
+>
+> **v2 rules** (`recommend_v2_frame`, Wilder-smoothed RSI/ADX, needs 200 trading days):
+> - **BUY** — close > SMA200 **and** EMA20 > EMA50 **and** +DI > −DI
+> - **SELL** — close < SMA200, **or** EMA20 < EMA50 **and** −DI > +DI
+> - **HOLD** — otherwise (long-term uptrend intact, short-term trend mixed)
+> - **confidence** — share of 5 trend reads that agree (price vs SMA200, SMA50 vs SMA200,
+>   EMA20 vs EMA50, +DI vs −DI, MACD histogram), 0–100. It measures trend agreement, not a
+>   win probability. Strength: ≥80 Strong, ≥60 Moderate, ≥40 Weak, else Insufficient.
+> - Fewer than 200 bars of history → HOLD / Insufficient (not an error).
+> - `details` adds `Regime` (SMA200, UP/DOWN) and `DI` (+DI/−DI); the response adds `engine`.
+>
+> Why: `backtest/` replays both engines on 2021–2026 data. v1's trend and mean-reversion
+> votes cancel out (confidence never reaches its own "Strong" band) and its SELLs were
+> followed by better returns than its BUYs; v2 flips ~3× less and cut drawdowns. Neither
+> showed reliable predictive edge on a broad 40-stock universe — v2's gain is risk control
+> and consistent signal meaning. See `backtest/README.md`.
 
 This section explains every indicator used and how they combine into a final recommendation. Reading this gives you a solid foundation in technical analysis.
 

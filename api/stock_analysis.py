@@ -398,6 +398,228 @@ def generate_recommendation(latest, ticker):
     return direction, strength, confidence, trend_label, round(float(adx_val), 2)
 
 
+# ----- v2 engine: regime-gated trend following -----
+# Backtested in backtest/ against the v1 vote above: v1's trend-following and
+# mean-reversion votes cancel each other out (confidence never reaches its own
+# "Strong" band) and its SELLs were followed by *better* returns than its BUYs.
+# v2 keeps one consistent meaning — BUY = in an uptrend, SELL = trend broken,
+# exit — flips ~3x less often and roughly halved drawdowns in the backtest.
+# Its edge is risk control, not prediction: on a broad 40-stock universe
+# forward-return hit rates stayed ~50%. Indicators use standard Wilder
+# smoothing and need ~1y of history, so v2 always downloads V2_PERIOD.
+ENGINE_VERSION = "v2_trend"
+V2_PERIOD = "2y"
+V2_MIN_BARS = 200  # SMA200
+
+
+def _wilder(x, n=14):
+    return x.ewm(alpha=1 / n, adjust=False).mean()
+
+
+def calculate_indicators_v2(df):
+    """Causal indicators on plain Open/High/Low/Close/Volume columns — row t
+    uses bars <= t only, so the backtest can compute every day in one pass."""
+    d = df.copy()
+    c, h, l = d["Close"], d["High"], d["Low"]
+    d["SMA20"] = c.rolling(20).mean()
+    d["SMA50"] = c.rolling(50).mean()
+    d["SMA200"] = c.rolling(200).mean()
+    d["EMA20"] = c.ewm(span=20, adjust=False).mean()
+    d["EMA50"] = c.ewm(span=50, adjust=False).mean()
+    delta = c.diff()
+    d["RSI"] = 100 - 100 / (1 + _wilder(delta.clip(lower=0)) / _wilder(-delta.clip(upper=0)))
+    d["MACD"] = c.ewm(span=12, adjust=False).mean() - c.ewm(span=26, adjust=False).mean()
+    d["MACD_Signal"] = d["MACD"].ewm(span=9, adjust=False).mean()
+    d["MACD_H"] = d["MACD"] - d["MACD_Signal"]
+    tr = pd.concat([h - l, (h - c.shift()).abs(), (l - c.shift()).abs()], axis=1).max(axis=1)
+    d["ATR14"] = _wilder(tr)
+    up, down = h - h.shift(), l.shift() - l
+    d["Plus_DI"] = 100 * _wilder(up.where((up > down) & (up > 0), 0.0)) / d["ATR14"]
+    d["Minus_DI"] = 100 * _wilder(down.where((down > up) & (down > 0), 0.0)) / d["ATR14"]
+    d["ADX"] = _wilder((d["Plus_DI"] - d["Minus_DI"]).abs() / (d["Plus_DI"] + d["Minus_DI"]) * 100)
+    std20 = c.rolling(20).std()
+    d["BB_Middle"] = d["SMA20"]
+    d["BB_Upper"] = d["SMA20"] + 2 * std20
+    d["BB_Lower"] = d["SMA20"] - 2 * std20
+    return d
+
+
+def recommend_v2_frame(d):
+    """Signal/strength/confidence for every row of calculate_indicators_v2()
+    output (rows without SMA200 yet are dropped). Shared by the live endpoint
+    (last row) and the backtest (all rows), so they cannot drift apart.
+
+    BUY:  close > SMA200 and EMA20 > EMA50 and +DI > -DI
+    SELL: close < SMA200, or EMA20 < EMA50 and -DI > +DI
+    HOLD: otherwise (uptrend intact but short-term trend mixed)
+
+    confidence = how many of 5 trend reads (price vs SMA200, SMA50 vs SMA200,
+    EMA20 vs EMA50, +DI vs -DI, MACD histogram) agree, as 0-100. It describes
+    trend agreement, not a win probability — the backtest found no
+    confidence level that predicted returns better than another."""
+    d = d.dropna(subset=["SMA200", "ADX", "RSI"])
+    up_regime = d["Close"] > d["SMA200"]
+    buy = up_regime & (d["EMA20"] > d["EMA50"]) & (d["Plus_DI"] > d["Minus_DI"])
+    sell = ~up_regime | ((d["EMA20"] < d["EMA50"]) & (d["Minus_DI"] > d["Plus_DI"]))
+    signal = pd.Series("HOLD", index=d.index)
+    signal[buy] = "BUY"
+    signal[sell & ~buy] = "SELL"
+
+    def sign(x):
+        return (x > 0).astype(int) - (x < 0).astype(int)
+
+    votes = pd.concat([
+        sign(d["Close"] - d["SMA200"]),
+        sign(d["SMA50"] - d["SMA200"]),
+        sign(d["EMA20"] - d["EMA50"]),
+        sign(d["Plus_DI"] - d["Minus_DI"]),
+        sign(d["MACD_H"]),
+    ], axis=1)
+    confidence = (votes.mean(axis=1).abs() * 100).round(1)
+
+    strength = pd.Series("Insufficient", index=d.index)
+    strength[confidence >= 40] = "Weak"
+    strength[confidence >= 60] = "Moderate"
+    strength[confidence >= 80] = "Strong"
+
+    trend = pd.Series("Weak", index=d.index)
+    trend[d["ADX"] >= 20] = "Moderate"
+    trend[d["ADX"] >= 40] = "Strong"
+
+    return pd.DataFrame({
+        "signal": signal,
+        "strength": strength,
+        "confidence": confidence,
+        "trend_label": trend,
+        "adx": d["ADX"].round(2),
+        "regime": up_regime.map({True: "UP", False: "DOWN"}),
+    })
+
+
+def _analyze_v1(stock_data, ticker):
+    """Original 7-indicator vote. Returns (result_fields, latest_row) or an
+    error string."""
+    stock_data = calculate_indicators(stock_data, ticker)
+
+    required_cols = ['SMA20', 'SMA50', 'EMA20', 'EMA50', 'RSI', 'MACD',
+                     'MACD_Signal', 'ATR14', 'BB_Upper', 'BB_Lower',
+                     'Stoch_K', 'Stoch_D', 'OBV', 'OBV_EMA20', 'ADX']
+    latest_data = stock_data.dropna(subset=required_cols)
+    if latest_data.empty:
+        return "Not enough data to calculate indicators. Try a longer period."
+
+    latest = latest_data.iloc[-1]
+
+    close_col = f"Close_{ticker}" if f"Close_{ticker}" in latest.index else "Close"
+    close_val = float(latest[close_col])
+
+    recommendation, strength, confidence, trend_label, adx_val = generate_recommendation(latest, ticker)
+
+    details = {
+        "SMA_Signal":      "BUY" if latest['SMA20'] > latest['SMA50'] else "SELL",
+        "EMA_Signal":      "BUY" if latest['EMA20'] > latest['EMA50'] else "SELL",
+        "RSI": {
+            "value":  round(float(latest['RSI']), 2),
+            "signal": "Overbought (SELL)" if latest['RSI'] > 70 else "Oversold (BUY)" if latest['RSI'] < 30 else "Neutral"
+        },
+        "MACD": {
+            "value":  round(float(latest['MACD']), 4),
+            "signal": "Bullish" if latest['MACD'] > latest['MACD_Signal'] else "Bearish"
+        },
+        "ATR14": {
+            "value":       round(float(latest['ATR14']), 2),
+            "description": "Volatility"
+        },
+        "BollingerBands": {
+            "upper":    round(float(latest['BB_Upper']), 2),
+            "middle":   round(float(latest['BB_Middle']), 2),
+            "lower":    round(float(latest['BB_Lower']), 2),
+            "close":    round(close_val, 2),
+            "signal":   "BUY" if close_val < latest['BB_Lower'] else "SELL" if close_val > latest['BB_Upper'] else "Neutral"
+        },
+        "Stochastic": {
+            "K":      round(float(latest['Stoch_K']), 2),
+            "D":      round(float(latest['Stoch_D']), 2),
+            "signal": "Oversold (BUY)" if latest['Stoch_K'] < 20 else "Overbought (SELL)" if latest['Stoch_K'] > 80 else "Neutral"
+        },
+        "OBV": {
+            "value":  round(float(latest['OBV']), 0),
+            "signal": "Bullish" if latest['OBV'] > latest['OBV_EMA20'] else "Bearish"
+        }
+    }
+
+    return {
+        "engine":          "v1",
+        "recommendation":  recommendation,
+        "strength":        strength,
+        "confidence":      confidence,
+        "trend_strength":  f"{trend_label} (ADX: {adx_val})",
+        "details":         details,
+    }, latest
+
+
+def _analyze_v2(stock_data, ticker):
+    """Regime-gated trend engine (see recommend_v2_frame). A ticker with
+    under V2_MIN_BARS of history gets HOLD/Insufficient instead of an error,
+    so StockBot still logs a row for it."""
+    ind = calculate_indicators_v2(stock_data)
+    rec = recommend_v2_frame(ind)
+    if rec.empty:
+        latest = ind.iloc[-1]
+        return {
+            "engine":         ENGINE_VERSION,
+            "recommendation": "HOLD",
+            "strength":       "Insufficient",
+            "confidence":     0.0,
+            "trend_strength": "Weak (ADX: 0)",
+            "details":        {"note": f"needs {V2_MIN_BARS} trading days of history, has {len(ind)}"},
+        }, latest
+
+    r = rec.iloc[-1]
+    latest = ind.loc[rec.index[-1]]
+    close_val = float(latest["Close"])
+    details = {
+        "Regime": {
+            "sma200": round(float(latest["SMA200"]), 2),
+            "signal": r["regime"],
+        },
+        "SMA_Signal": "BUY" if latest["SMA50"] > latest["SMA200"] else "SELL",
+        "EMA_Signal": "BUY" if latest["EMA20"] > latest["EMA50"] else "SELL",
+        "DI": {
+            "plus":   round(float(latest["Plus_DI"]), 2),
+            "minus":  round(float(latest["Minus_DI"]), 2),
+            "signal": "Bullish" if latest["Plus_DI"] > latest["Minus_DI"] else "Bearish",
+        },
+        "RSI": {
+            "value":  round(float(latest["RSI"]), 2),
+            "signal": "Overbought" if latest["RSI"] > 70 else "Oversold" if latest["RSI"] < 30 else "Neutral",
+        },
+        "MACD": {
+            "value":     round(float(latest["MACD"]), 4),
+            "histogram": round(float(latest["MACD_H"]), 4),
+            "signal":    "Bullish" if latest["MACD_H"] > 0 else "Bearish",
+        },
+        "ATR14": {
+            "value":       round(float(latest["ATR14"]), 2),
+            "description": "Volatility",
+        },
+        "BollingerBands": {
+            "upper":  round(float(latest["BB_Upper"]), 2),
+            "middle": round(float(latest["BB_Middle"]), 2),
+            "lower":  round(float(latest["BB_Lower"]), 2),
+            "close":  round(close_val, 2),
+        },
+    }
+    return {
+        "engine":         ENGINE_VERSION,
+        "recommendation": r["signal"],
+        "strength":       r["strength"],
+        "confidence":     float(r["confidence"]),
+        "trend_strength": f"{r['trend_label']} (ADX: {r['adx']})",
+        "details":        details,
+    }, latest
+
+
 # ----- API Endpoint -----
 def main_app(request, context):
     try:
@@ -412,6 +634,15 @@ def main_app(request, context):
 
         ticker = data.get('ticker')
         period = data.get('period', '90d')  # default bumped to 90d for SMA50
+        # "v1" = the original 7-indicator vote, kept for rollback/comparison.
+        engine = data.get('engine', 'v2')
+        if engine not in ('v1', 'v2'):
+            return {
+                "statusCode": 400,
+                "body": json.dumps({"error": "engine must be 'v1' or 'v2'"})
+            }
+        if engine == 'v2':
+            period = V2_PERIOD
 
         if not ticker:
             return {
@@ -429,7 +660,7 @@ def main_app(request, context):
         # Only when Yahoo returned nothing at all do we use Twelve Data alone.
         yahoo_last = _last_bar_date(stock_data)
         if yahoo_last is None or yahoo_last < expected_session:
-            td, td_status = _download_twelvedata(ticker)
+            td, td_status = _download_twelvedata(ticker, outputsize=520 if engine == 'v2' else 150)
             td_last = _last_bar_date(td)
             if td_last is not None and td_last > (yahoo_last or date.min):
                 if yahoo_last is None:
@@ -464,73 +695,21 @@ def main_app(request, context):
         # hard failure (stale data still beats none), but the caller should know.
         data_is_stale = stock_data.index[-1].date() < expected_session
 
-        stock_data = calculate_indicators(stock_data, ticker)
-
-        required_cols = ['SMA20', 'SMA50', 'EMA20', 'EMA50', 'RSI', 'MACD',
-                         'MACD_Signal', 'ATR14', 'BB_Upper', 'BB_Lower',
-                         'Stoch_K', 'Stoch_D', 'OBV', 'OBV_EMA20', 'ADX']
-        latest_data = stock_data.dropna(subset=required_cols)
-        if latest_data.empty:
-            return {
-                "statusCode": 400,
-                "body": json.dumps({"error": "Not enough data to calculate indicators. Try a longer period."})
-            }
-
-        latest = latest_data.iloc[-1]
-
-        close_col = f"Close_{ticker}" if f"Close_{ticker}" in latest.index else "Close"
-        close_val = float(latest[close_col])
-
-        recommendation, strength, confidence, trend_label, adx_val = generate_recommendation(latest, ticker)
-
-        details = {
-            "SMA_Signal":      "BUY" if latest['SMA20'] > latest['SMA50'] else "SELL",
-            "EMA_Signal":      "BUY" if latest['EMA20'] > latest['EMA50'] else "SELL",
-            "RSI": {
-                "value":  round(float(latest['RSI']), 2),
-                "signal": "Overbought (SELL)" if latest['RSI'] > 70 else "Oversold (BUY)" if latest['RSI'] < 30 else "Neutral"
-            },
-            "MACD": {
-                "value":  round(float(latest['MACD']), 4),
-                "signal": "Bullish" if latest['MACD'] > latest['MACD_Signal'] else "Bearish"
-            },
-            "ATR14": {
-                "value":       round(float(latest['ATR14']), 2),
-                "description": "Volatility"
-            },
-            "BollingerBands": {
-                "upper":    round(float(latest['BB_Upper']), 2),
-                "middle":   round(float(latest['BB_Middle']), 2),
-                "lower":    round(float(latest['BB_Lower']), 2),
-                "close":    round(close_val, 2),
-                "signal":   "BUY" if close_val < latest['BB_Lower'] else "SELL" if close_val > latest['BB_Upper'] else "Neutral"
-            },
-            "Stochastic": {
-                "K":      round(float(latest['Stoch_K']), 2),
-                "D":      round(float(latest['Stoch_D']), 2),
-                "signal": "Oversold (BUY)" if latest['Stoch_K'] < 20 else "Overbought (SELL)" if latest['Stoch_K'] > 80 else "Neutral"
-            },
-            "OBV": {
-                "value":  round(float(latest['OBV']), 0),
-                "signal": "Bullish" if latest['OBV'] > latest['OBV_EMA20'] else "Bearish"
-            }
-        }
-
-        response = {
+        common = {
             "ticker":          ticker,
-            "data_as_of":      str(latest.name),
             "expected_session": str(expected_session),
             "stale":           bool(data_is_stale),
             "served_at":       datetime.now(ZoneInfo("UTC")).isoformat(),
             "fetch":           fetch_meta,
             "rows_returned":   rows_returned,
-            "recommendation":  recommendation,
-            "strength":        strength,
-            "confidence":      confidence,
-            "trend_strength":  f"{trend_label} (ADX: {adx_val})",
-            "details":         details,
-            "latest_data":     latest.to_dict()
         }
+        analyze = _analyze_v2 if engine == 'v2' else _analyze_v1
+        result = analyze(stock_data, ticker)
+        if isinstance(result, str):
+            return {"statusCode": 400, "body": json.dumps({"error": result})}
+        fields, latest = result
+        response = {**common, **fields, "data_as_of": str(latest.name),
+                    "latest_data": latest.to_dict()}
         return {
             "statusCode": 200,
             "body": json.dumps(response)

@@ -1,0 +1,5 @@
+numpy
+requests
+pandas==2.2.3
+gspread
+google-auth
