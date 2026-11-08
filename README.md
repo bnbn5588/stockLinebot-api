@@ -168,6 +168,7 @@ curl -X POST http://localhost:5000 \
 | `fetch.patched_bars` | Only present for `yahoo+twelvedata`: how many trailing bars were filled in from Twelve Data (usually 1). |
 | `fetch.fallback` | Only present when Twelve Data was tried but did **not** produce fresher data (so `stale` is likely still `true`): `"rate_limited"` if Twelve Data's own 429 (its free tier is 8 requests/minute; one retry with backoff is attempted before giving up) or `"error"` for anything else (bad symbol, network error, empty payload). Absent entirely if the fallback wasn't needed or isn't configured. **Diagnostic only** — callers should key behavior off `stale`, not this field. |
 | `rows_returned` | Number of daily bars used (today's still-forming bar is excluded while the US market is open). |
+| `earnings` | Next earnings report from Yahoo's calendar: `{"date": "2026-11-17", "days": 9, "estimated": false}` — `days` is calendar days from today (US/Eastern) and can be negative when Yahoo has not published the next date yet; `estimated` is `true` when Yahoo only has an estimated window. `null` for ETFs/indexes, or when the lookup fails or takes over 4 s. **Context only — it never affects the recommendation.** |
 | `recommendation` | `BUY`, `SELL`, or `HOLD` |
 | `strength` | `Strong`, `Moderate`, `Weak`, or `Insufficient` |
 | `confidence` | Percentage score (0–100) of how strongly signals agree |

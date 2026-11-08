@@ -7,6 +7,7 @@ import yfinance as yf
 import pandas as pd
 from http.server import BaseHTTPRequestHandler
 import os
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta, date, time as dtime
 from zoneinfo import ZoneInfo
 from dotenv import load_dotenv
@@ -113,6 +114,46 @@ def _download_fresh(ticker, period, et_now, attempts=3, pause=1.2):
                 pass
     meta = {"session": _SESSION_KIND, "attempts": used}
     return best, expected, meta
+
+
+EARNINGS_TIMEOUT_SEC = 4
+
+
+def _fetch_earnings_dates(ticker):
+    session = _make_session()
+    try:
+        cal = yf.Ticker(ticker, session=session).calendar
+    finally:
+        if session is not None:
+            try:
+                session.close()
+            except Exception:
+                pass
+    dates = cal.get("Earnings Date") if isinstance(cal, dict) else None
+    return sorted(d for d in (dates or []) if isinstance(d, date))
+
+
+def _next_earnings(ticker, today):
+    """Yahoo's next earnings date, as context only - it never changes the
+    signal. Two dates mean Yahoo only has an estimated window (the first one
+    is reported). `days` is calendar days from `today` (US/Eastern) and can be
+    negative when Yahoo has not rolled over to the next report yet.
+    Best effort: any failure or a slow Yahoo returns None so the analysis is
+    never held up by it."""
+    pool = ThreadPoolExecutor(max_workers=1)
+    try:
+        dates = pool.submit(_fetch_earnings_dates, ticker).result(timeout=EARNINGS_TIMEOUT_SEC)
+    except Exception:
+        return None
+    finally:
+        pool.shutdown(wait=False)
+    if not dates:
+        return None
+    return {
+        "date":      str(dates[0]),
+        "days":      (dates[0] - today).days,
+        "estimated": len(dates) > 1,
+    }
 
 
 def _twelvedata_request(ticker, outputsize):
@@ -709,6 +750,7 @@ def main_app(request, context):
             return {"statusCode": 400, "body": json.dumps({"error": result})}
         fields, latest = result
         response = {**common, **fields, "data_as_of": str(latest.name),
+                    "earnings": _next_earnings(ticker, et_now.date()),
                     "latest_data": latest.to_dict()}
         return {
             "statusCode": 200,
