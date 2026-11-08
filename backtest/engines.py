@@ -215,8 +215,24 @@ def sma200_gate(sig: pd.DataFrame, df: pd.DataFrame) -> pd.DataFrame:
     return sig
 
 
+def v0_from_votes(sig: pd.DataFrame, df: pd.DataFrame) -> pd.DataFrame:
+    """The original engine (Aug 2025 -> 2026-04-16, commits 539bf1b/0c7ada2):
+    an unweighted vote of SMA20/50, EMA20/50, RSI 30/70 and MACD vs signal
+    (its volume term added 0.5 to both sides, so it never mattered), ties ->
+    HOLD, no confidence score. Its indicator formulas are identical to v1's
+    and StockBot always requested period=90d, so it's derived from the v1
+    replay's cached per-indicator votes instead of a second replay."""
+    out = sig.copy()
+    total = sig.v_sma + sig.v_ema + sig.v_rsi + sig.v_macd
+    out["signal"] = np.where(total > 0, "BUY", np.where(total < 0, "SELL", "HOLD"))
+    out["confidence"] = 0.0
+    out["strength"] = ""
+    return out
+
+
 # name -> (base engine, transform(base_signals, full_history_df))
 DERIVED = {
+    "v0": ("current", v0_from_votes),
     "current_gated": ("current_1y", sma200_gate),
 }
 

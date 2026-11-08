@@ -42,7 +42,7 @@ def main():
     hist = fetch_history(sheet_id, os.environ.get("SHEET_NAME", "history"))
     rows = []
     for t, g in hist.groupby("ticker"):
-        sig = _signals("current", t, "7y", os.environ.get("SINCE", "2021-01-01"))
+        sig = _signals(os.environ.get("ENGINE", "current"), t, "7y", os.environ.get("SINCE", "2021-01-01"))
         m = g.merge(sig[["signal", "confidence"]], left_on="session", right_index=True,
                     how="inner", suffixes=("_sheet", "_replay"))
         m["ticker"] = t

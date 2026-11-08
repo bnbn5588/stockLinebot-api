@@ -48,3 +48,5 @@ once on full history and take seconds.
 - The default universe is today's watchlist — chosen with hindsight and
   heavy in winners. Re-run on a broader list (`--tickers`) before trusting a
   result.
+
+Results and conclusions of every experiment so far: [EXPERIMENTS.md](EXPERIMENTS.md).
