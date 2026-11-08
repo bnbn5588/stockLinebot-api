@@ -330,8 +330,8 @@ B1 1.22 / −18.1%; B2 1.18 / −18.1%; C1 1.14 / −20.9%; B1+C1 1.16 / −20.8
 | C | ลด whipsaw (C1 ยืนยัน 2 วัน / C2 โซน ±2%) | **ไม่ผ่าน** — C1 ลด flips ได้ ~34% ถ้าต้องการ (ข้อ 8.5) |
 | D | ปฏิทินงบการเงิน | ยังไม่ทดสอบ (ต้องหาข้อมูลวันประกาศงบ) |
 | E | ML (v3) | เลื่อนไป — ต้องใช้เครื่องแรงกว่า, คาดหวัง edge เล็ก |
-| F | เปลี่ยน label strength ใน LINE (เช่น "SELL (Insufficient, 20%)") | ยังไม่ทำ |
-| G | prompt AI ใช้ regime / +DI/−DI, แสดงจำนวน trade (n) | ยังไม่ทำ |
+| F | เปลี่ยน label strength ใน LINE (เช่น "SELL (Insufficient, 20%)") | **ทำแล้ว** 2026-11-08 — แสดง "N/5 trend reads up" (StockBot `44dccca`, StockBot_OA `a9fce65`) |
+| G | prompt AI ใช้ regime / +DI/−DI, แสดงจำนวน trade (n) | **ทำแล้ว** 2026-11-08 — อธิบายความหมายสัญญาณ, ซ่อนสถิติเมื่อ trade < 5, ภาษาเชิงความเสี่ยง (stockBot_AI_Insight `cd26aba`) |
 
 ---
 
