@@ -63,12 +63,15 @@ def components(panel: pd.DataFrame, h: int = 5) -> pd.DataFrame:
         sell = panel.loc[panel[c] == -1, f"x{h}"]
         rows.append({"indicator": c[2:], "n_buy": len(buy), f"x{h}_buy": buy.mean(),
                      "n_sell": len(sell), f"x{h}_sell": sell.mean(), "spread": buy.mean() - sell.mean()})
+    if not rows:  # engine output carries no per-indicator votes
+        return pd.DataFrame()
     return pd.DataFrame(rows).set_index("indicator").sort_values("spread", ascending=False)
 
 
-def long_flat_equity(px: pd.DataFrame, sig: pd.Series) -> pd.Series:
+def long_flat_equity(px: pd.DataFrame, sig: pd.Series, cost: float = 0.0) -> pd.Series:
     """Daily returns of the BUY-enter / SELL-exit / HOLD-keep strategy the
-    AI worker's portfolio simulation assumes, executed at next open."""
+    AI worker's portfolio simulation assumes, executed at next open. `cost`
+    is charged on every entry and every exit (fraction, 0.001 = 0.1%)."""
     sig = sig.reindex(px.index)
     pos = pd.Series(np.nan, index=px.index)
     pos[sig == "BUY"] = 1.0
@@ -84,6 +87,7 @@ def long_flat_equity(px: pd.DataFrame, sig: pd.Series) -> pd.Series:
     exited = (held.shift(1).fillna(0) == 1) & (held == 0)
     ret = np.where(entered == 1, oc, np.where(held == 1, cc, 0.0))
     ret = np.where(exited, co, ret)
+    ret = ret - cost * ((entered == 1) | exited)
     return pd.Series(ret, index=px.index).fillna(0.0)
 
 

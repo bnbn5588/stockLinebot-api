@@ -192,6 +192,57 @@ def v2_trend(df: pd.DataFrame, since=None) -> pd.DataFrame:
     return out
 
 
+# ── v2 refinements (B: market regime, C: whipsaw control) ──────────────────
+# Fixed before testing; judged on the broad universe with costs.
+
+def _market_up(index: pd.DatetimeIndex) -> pd.Series:
+    from . import data as _data  # lazy: engines must import without the cache
+    spy = _data.load("SPY").Close
+    return (spy > spy.rolling(200).mean()).reindex(index).ffill().fillna(False)
+
+
+def _confirm(sig: pd.Series, days: int = 2) -> pd.Series:
+    """A new signal takes effect only after it has shown `days` in a row."""
+    out, emitted = [], None
+    streak, last = 0, None
+    for s in sig:
+        streak = streak + 1 if s == last else 1
+        last = s
+        if emitted is None or (s != emitted and streak >= days):
+            emitted = s
+        out.append(emitted)
+    return pd.Series(out, index=sig.index)
+
+
+def _v2_signals(df: pd.DataFrame, since=None, band: float = 0.0,
+                market: str = "", confirm: int = 1) -> pd.DataFrame:
+    ind = calculate_indicators_v2(df)
+    rec = recommend_v2_frame(ind)
+    d = ind.loc[rec.index]
+    if band:
+        # C2: enter only clearly above SMA200, exit only clearly below
+        up_trend = (d.EMA20 > d.EMA50) & (d.Plus_DI > d.Minus_DI)
+        down_trend = (d.EMA20 < d.EMA50) & (d.Minus_DI > d.Plus_DI)
+        buy = (d.Close > d.SMA200 * (1 + band)) & up_trend
+        sell = (d.Close < d.SMA200 * (1 - band)) | down_trend
+        sig = pd.Series("HOLD", index=d.index)
+        sig[buy] = "BUY"
+        sig[sell & ~buy] = "SELL"
+    else:
+        sig = rec.signal.copy()
+    if market:
+        up = _market_up(sig.index)
+        if market == "gate":      # B1: no new BUY in a market downtrend
+            sig[(sig == "BUY") & ~up] = "HOLD"
+        elif market == "exit":    # B2: market downtrend -> everything SELL
+            sig[~up] = "SELL"
+    if confirm > 1:
+        sig = _confirm(sig, confirm)
+    out = pd.DataFrame({"signal": sig, "confidence": rec.confidence, "adx": rec.adx})
+    out.index.name = "date"
+    return out[out.index >= pd.Timestamp(since)] if since is not None else out
+
+
 def v2_pullback(df: pd.DataFrame, since=None) -> pd.DataFrame:
     """Buy dips inside an uptrend: oversold RSI or a lower-Bollinger tag
     while above the 200-day average; exit on losing the 200-day average.
@@ -243,4 +294,9 @@ ENGINES: Dict[str, Callable[..., pd.DataFrame]] = {
     "current_1y": lambda df, since=None: current(df, 365, since),
     "v2_trend": v2_trend,
     "v2_pullback": v2_pullback,
+    "v2_B1_mktgate": lambda df, since=None: _v2_signals(df, since, market="gate"),
+    "v2_B2_mktexit": lambda df, since=None: _v2_signals(df, since, market="exit"),
+    "v2_C1_confirm2": lambda df, since=None: _v2_signals(df, since, confirm=2),
+    "v2_C2_band2": lambda df, since=None: _v2_signals(df, since, band=0.02),
+    "v2_B1C1": lambda df, since=None: _v2_signals(df, since, market="gate", confirm=2),
 }

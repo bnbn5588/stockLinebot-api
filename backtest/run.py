@@ -53,7 +53,7 @@ def build_panel(engines, tickers, period, jobs, since):
     return {(e, t): s for e, t, s in results}
 
 
-def report(engine, tickers, sigs, prices, bench, start, end):
+def report(engine, tickers, sigs, prices, bench, start, end, cost=0.0):
     frames, strat, bah, churn, trades = [], [], [], [], []
     for t in tickers:
         s = sigs[(engine, t)]
@@ -63,7 +63,7 @@ def report(engine, tickers, sigs, prices, bench, start, end):
         px = prices[t].loc[s.index[0]:end]
         f = metrics.forward_returns(px, bench).reindex(s.index)
         frames.append(s.join(f).assign(ticker=t))
-        strat.append(metrics.long_flat_equity(px, s.signal).rename(t))
+        strat.append(metrics.long_flat_equity(px, s.signal, cost).rename(t))
         bah.append((px.Close.pct_change().fillna(0)).rename(t))
         churn.append(metrics.flips_per_year(s.signal))
         # completed BUY->SELL round trips, like the AI worker's trade stats
@@ -110,6 +110,7 @@ def main():
     ap.add_argument("--period", default="7y", help="history to download")
     ap.add_argument("--jobs", type=int, default=2)
     ap.add_argument("--out", default=None, help="dir to write per-engine panel CSVs")
+    ap.add_argument("--cost", type=float, default=0.0, help="per entry/exit, e.g. 0.001 = 0.1%%")
     a = ap.parse_args()
 
     engines = a.engines.split(",")
@@ -124,7 +125,7 @@ def main():
     start, end = pd.Timestamp(a.start), pd.Timestamp(a.end)
 
     for e in engines:
-        panel, _ = report(e, tickers, sigs, prices, bench, start, end)
+        panel, _ = report(e, tickers, sigs, prices, bench, start, end, a.cost)
         if a.out:
             Path(a.out).mkdir(parents=True, exist_ok=True)
             panel.to_csv(Path(a.out) / f"panel_{e}.csv")
