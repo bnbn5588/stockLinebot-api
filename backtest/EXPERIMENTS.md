@@ -335,6 +335,7 @@ B1 1.22 / −18.1%; B2 1.18 / −18.1%; C1 1.14 / −20.9%; B1+C1 1.16 / −20.8
 | H | คุณภาพ AI: ข่าวจาก Yahoo headlines (อ้าง id), ตัวตรวจคำตอบ + แก้ 1 รอบ, pin model | **ทำแล้ว** 2026-11-08 — `claude-sonnet-5-5` ตายตัวตั้งแต่วันนี้ (forward test เริ่ม 2026-11-09 ใช้ model นี้ตลอด ถ้าเปลี่ยนต้องจดวันที่) (stockBot_AI_Insight `4422806`) |
 | I | เก็บ archive ทุกขั้นถาวร (input snapshot, prompt, คำตอบ AI, headline ดิบทุกตัว) ไว้เป็นข้อมูล train/ประเมินในอนาคต | **ทำแล้ว** 2026-11-09 — `data/archive/YYYY-MM-DD.jsonl` บน OCI host, backfill จาก Redis ได้ 2026-11-08 และ analysis 2026-11-09; label (ผลตอบแทนล่วงหน้า) ยังไม่ได้ทำ คำนวณย้อนจาก sheet ได้ (stockBot_AI_Insight `d16ddee`) |
 | J | ให้กฎในโค้ดเลือก topPicks/riskWatch และกำหนด stance (AI แค่อธิบาย), ข่าวมี effect/materiality (flip เฉพาะ contradicts+high), ตัด system prompt ของ CLI | **ทำแล้ว** 2026-11-09 — เหตุผล: final 2 รอบบนข้อมูลเดียวกัน (8 พ.ย.) ให้ stance ต่างกัน 3/6 ตัว; input ต่อ call 24.8k→5.2k tokens; ต้นทุนรวม/วันประมาณ $0.3–0.4 → $0.15; analysis ของ 9 พ.ย. สร้างใหม่ด้วยกฎใหม่ ดังนั้น forward test ใช้กฎนี้ตั้งแต่วันแรก (stockBot_AI_Insight `6355285`) |
+| K | stance กลับได้ทางเดียว (favor→caution เท่านั้น) และให้ข่าวรายงาน "price target" ของนักวิเคราะห์ได้ | **ทำแล้ว** มีผลตั้งแต่ 2026-11-10 — เหตุผล: 9 พ.ย. ข่าว Oppenheimer อัปเกรด AMD (contradicts+high) พลิก SELL ใหม่ให้เป็น favor; ตัวตรวจตัดคำว่า price target ทำให้ตัวเลขเป้าหายจากข่าว stance ของ 9 พ.ย. ใช้กฎเดิม (stockBot_AI_Insight `cc27ece`) |
 
 ---
 
