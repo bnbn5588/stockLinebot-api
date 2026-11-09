@@ -333,6 +333,7 @@ B1 1.22 / −18.1%; B2 1.18 / −18.1%; C1 1.14 / −20.9%; B1+C1 1.16 / −20.8
 | F | เปลี่ยน label strength ใน LINE (เช่น "SELL (Insufficient, 20%)") | **ทำแล้ว** 2026-11-08 — แสดง "N/5 trend reads up" (StockBot `44dccca`, StockBot_OA `a9fce65`) |
 | G | prompt AI ใช้ regime / +DI/−DI, แสดงจำนวน trade (n) | **ทำแล้ว** 2026-11-08 — อธิบายความหมายสัญญาณ, ซ่อนสถิติเมื่อ trade < 5, ภาษาเชิงความเสี่ยง (stockBot_AI_Insight `cd26aba`) |
 | H | คุณภาพ AI: ข่าวจาก Yahoo headlines (อ้าง id), ตัวตรวจคำตอบ + แก้ 1 รอบ, pin model | **ทำแล้ว** 2026-11-08 — `claude-sonnet-5-5` ตายตัวตั้งแต่วันนี้ (forward test เริ่ม 2026-11-09 ใช้ model นี้ตลอด ถ้าเปลี่ยนต้องจดวันที่) (stockBot_AI_Insight `4422806`) |
+| I | เก็บ archive ทุกขั้นถาวร (input snapshot, prompt, คำตอบ AI, headline ดิบทุกตัว) ไว้เป็นข้อมูล train/ประเมินในอนาคต | **ทำแล้ว** 2026-11-09 — `data/archive/YYYY-MM-DD.jsonl` บน OCI host, backfill จาก Redis ได้ 2026-11-08 และ analysis 2026-11-09; label (ผลตอบแทนล่วงหน้า) ยังไม่ได้ทำ คำนวณย้อนจาก sheet ได้ (stockBot_AI_Insight `d16ddee`) |
 
 ---
 
